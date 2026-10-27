@@ -150,6 +150,8 @@ _WORDS = re.compile(r"[a-z]+|\d+")
 _FINANCIAL_EXPANSIONS = {
     "ebitda": "operating income depreciation amortization earnings interest taxes",
     "capex": "capital expenditures property plant equipment payments additions",
+    "roa": "net income total assets",
+    "roe": "net income shareholders stockholders equity",
     "margin": "income revenue sales earnings",
     "revenue": "sales revenues",
     "sales": "revenue revenues",
@@ -165,9 +167,15 @@ def _terms(text: str) -> Counter[str]:
 
 
 _STATEMENT_QUERIES = {
-    "income": re.compile(r"\bincome statements?\b|\bstatements? of (?:income|operations|earnings)\b|\bp\s*&\s*l\b"),
+    "income": re.compile(
+        r"\bincome statements?\b|\bstatements? of (?:income|operations|earnings)\b|\bp\s*&\s*l\b"
+        r"|\breturn on (?:assets|equity)\b|\bro[ae]\b"
+    ),
     "cash": re.compile(r"\bcash\s*flows?\b"),
-    "balance": re.compile(r"\bbalance sheets?\b|\bstatements? of financial position\b"),
+    "balance": re.compile(
+        r"\bbalance sheets?\b|\bstatements? of financial position\b|\breturn on (?:assets|equity)\b|\bro[ae]\b"
+        r"|\b(?:current|quick) ratio\b|\bworking capital\b"
+    ),
 }
 _STATEMENT_PREFIX = r"^(?:(?:consolidated|combined|condensed)\s+){0,2}"
 _STATEMENT_HEADINGS = {
@@ -234,20 +242,22 @@ def _queries(question: str) -> tuple[str, str, tuple[str, ...]]:
         dict.fromkeys(_FINANCIAL_EXPANSIONS[term] for term in _terms(question) if term in _FINANCIAL_EXPANSIONS)
     )
     phrases = re.findall(
-        r"\b(?:operating income|net income|cash flows?|balance sheets?|income statements?|capital expenditures)\b",
+        r"\b(?:operating income|net income|cash flows?|balance sheets?|income statements?|capital expenditures"
+        r"|(?:current|total) (?:assets|liabilities|equity)|(?:shareholders?|stockholders?)[\s\u2019']+equity"
+        r"|cost of (?:goods sold|sales|revenues?))\b",
         question.casefold(),
     )
     # Separate short concept queries prevent a long instruction from imposing a
     # lexical coverage floor that suppresses a table containing only one input.
     queries = tuple(dict.fromkeys(value for value in (primary, *concepts, *phrases) if value))
-    return primary, " ".join(concepts), queries
+    return primary, " ".join((*concepts, *phrases)), queries
 
 
 async def search_pdf_pages(
     memory: ScopedMemoryApplication, question: str, limit: int = 10
 ) -> tuple[MemoryCitation, ...]:
     """Retrieve real immutable entry citations; no document paths or labels are read."""
-    from powercontext.builtin.runtime.models import SearchMemoryRequest
+    from powercontext.builtin.runtime.models import GetMemoryEntryRequest, SearchMemoryRequest
 
     if type(limit) is not int or limit < 1 or not question.strip():
         raise ValueError("invalid-pdf-search")
@@ -264,7 +274,22 @@ async def search_pdf_pages(
                 hit.entry_version_id,
             )
             candidates.setdefault(key, hit)
-    return tuple(
-        MemoryCitation(memory_ref=hit.memory_ref, entry_id=hit.entry_id, entry_version_id=hit.entry_version_id)
-        for hit in _rank_pages(tuple(candidates.values()), query, expansion, question)[:limit]
-    )
+    citations: list[MemoryCitation] = []
+    seen_pages: set[str] = set()
+    for hit in _rank_pages(tuple(candidates.values()), query, expansion, question):
+        citation = MemoryCitation(
+            memory_ref=hit.memory_ref, entry_id=hit.entry_id, entry_version_id=hit.entry_version_id
+        )
+        entry = (await memory.get(GetMemoryEntryRequest(citation=citation))).entry
+        # Different Memory entries can cite the same page. An entry combining
+        # several pages cannot serve as an exact, single-page citation either.
+        if len(entry.sources) != 1 or entry.sources[0].source_type != "pdf-page":
+            continue
+        page_id = entry.sources[0].source_id
+        if page_id in seen_pages:
+            continue
+        seen_pages.add(page_id)
+        citations.append(citation)
+        if len(citations) == limit:
+            break
+    return tuple(citations)
