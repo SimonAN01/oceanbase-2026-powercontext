@@ -164,7 +164,37 @@ def _terms(text: str) -> Counter[str]:
     return Counter(_WORDS.findall(text.casefold()))
 
 
-def _rank_pages(hits: tuple[MemoryHit, ...], query: str, expansion: str) -> tuple[MemoryHit, ...]:
+_STATEMENT_QUERIES = {
+    "income": re.compile(r"\bincome statements?\b|\bstatements? of (?:income|operations|earnings)\b|\bp\s*&\s*l\b"),
+    "cash": re.compile(r"\bcash\s*flows?\b"),
+    "balance": re.compile(r"\bbalance sheets?\b|\bstatements? of financial position\b"),
+}
+_STATEMENT_PREFIX = r"^(?:(?:consolidated|combined|condensed)\s+){0,2}"
+_STATEMENT_HEADINGS = {
+    "income": re.compile(
+        _STATEMENT_PREFIX + r"(?:statements?\s+of\s+(?:income|operations|earnings)|income\s+statements?)\b"
+    ),
+    "cash": re.compile(_STATEMENT_PREFIX + r"(?:statements?\s+of\s+cash\s*flows?|cash\s*flow\s*statements?)\b"),
+    "balance": re.compile(_STATEMENT_PREFIX + r"(?:balance\s*sheets?|statements?\s+of\s+financial\s+position)\b"),
+}
+
+
+def _statement_page(text: str, focus: tuple[str, ...]) -> bool:
+    headings = [line for line in text.splitlines()[1:12] if line.strip()]
+    for position, line in enumerate(headings):
+        heading = " ".join(line.casefold().split())
+        if len(heading.split()) > 12 or re.search(r"\.(?:\s*\.)+", heading):
+            continue
+        # A column labelled "Income Statement" in a later footnote is not a
+        # primary statement title. Consolidated titles can follow longer headers.
+        if position > 3 and not re.match(r"(?:consolidated|combined|condensed)\b", heading):
+            continue
+        if any(_STATEMENT_HEADINGS[kind].search(heading) for kind in focus):
+            return True
+    return False
+
+
+def _rank_pages(hits: tuple[MemoryHit, ...], query: str, expansion: str, question: str) -> tuple[MemoryHit, ...]:
     """BM25 over actual retrieved page text, with lower-weight concept expansion."""
     documents = [_terms(hit.text) for hit in hits]
     lengths = [sum(document.values()) for document in documents]
@@ -172,6 +202,7 @@ def _rank_pages(hits: tuple[MemoryHit, ...], query: str, expansion: str) -> tupl
     frequency: Counter[str] = Counter(term for document in documents for term in document)
     weights = dict.fromkeys(_terms(expansion), 0.35)
     weights.update(dict.fromkeys(_terms(query), 1.0))
+    focus = tuple(kind for kind, pattern in _STATEMENT_QUERIES.items() if pattern.search(question.casefold()))
 
     def score(index: int) -> float:
         document = documents[index]
@@ -186,7 +217,13 @@ def _rank_pages(hits: tuple[MemoryHit, ...], query: str, expansion: str) -> tupl
             if document[term]
         )
 
-    return tuple(hits[index] for index in sorted(range(len(hits)), key=lambda index: (-score(index), index)))
+    return tuple(
+        hits[index]
+        for index in sorted(
+            range(len(hits)),
+            key=lambda index: (-int(_statement_page(hits[index].text, focus)), -score(index), index),
+        )
+    )
 
 
 def _queries(question: str) -> tuple[str, str, tuple[str, ...]]:
@@ -229,5 +266,5 @@ async def search_pdf_pages(
             candidates.setdefault(key, hit)
     return tuple(
         MemoryCitation(memory_ref=hit.memory_ref, entry_id=hit.entry_id, entry_version_id=hit.entry_version_id)
-        for hit in _rank_pages(tuple(candidates.values()), query, expansion)[:limit]
+        for hit in _rank_pages(tuple(candidates.values()), query, expansion, question)[:limit]
     )

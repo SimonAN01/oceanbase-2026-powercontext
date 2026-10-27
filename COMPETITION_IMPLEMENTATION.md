@@ -1,6 +1,6 @@
 # PowerContext 2026 参赛实现与验证
 
-日期：2026-10-27。实现基于冻结版本 `9db1753434162c0aa7c9f1189a1722e617880a52`，保留原始提交历史。CSV 基线位于 `competition/csv-evidence`；完整实现位于 `competition/rank-push-20261027`。
+日期：2026-10-27。实现基于冻结版本 `9db1753434162c0aa7c9f1189a1722e617880a52`，保留原始提交历史。CSV 基线位于 `competition/csv-evidence`；完整实现位于 `competition/rank-push-20261027`；显式财务报表范围的检索改进位于 `competition/pdf-statement-focus-20261027`。
 
 ## 功能
 
@@ -9,7 +9,7 @@
 | 仓库准备，10 分 | 保留冻结基线历史，仓库可匿名读取 | `check-baseline`；匿名 GitHub 仓库及指定 commit 查询 |
 | CSV 行证据，20 分 | `sources/csv_rows.py`：完整校验、稳定行身份、原始字段及文本投影 | 17 项通过 |
 | Pi 会话，20 分 | `sources/pi_session.py`：完整事件树校验、可见内容、分支切换、持久化 checkpoint 及历史改写检测 | 15 项通过 |
-| PDF 页检索，50 分 | `sources/pdf_pages.py`：全部物理页、空白页、空密码权限、全文摘要、页级 Source；公开 Memory 搜索和离线重排 | 6 项通过；完整解析并持久化 503 页公开财报 |
+| PDF 页检索，50 分 | `sources/pdf_pages.py`：全部物理页、空白页、空密码权限、全文摘要、页级 Source；公开 Memory 搜索、显式报表范围和离线重排 | 6 项通过；完整解析并持久化 503 页公开财报 |
 | HTTP 重排，20 分 | `builtin/artifacts/memory/http_reranker.py`：原始全局序号、有限批次、响应严格校验、稳定排序和真实 usage | 10 项通过 |
 | 增量上下文，20 分 | `builtin/runtime/context_pack.py` 及 `prepare_incremental`：UTF-8 分块、规范 JSON/Base64、摘要、协议字节数和独立重建 | 14 项通过 |
 | 计数触发，20 分 | Runtime 配置及原生 supervisor：按 scope/family 成功 cursor 后的 journal 身份计数，与时间条件取 OR；保留原有窗口、wave 和重试 | 17 项通过 |

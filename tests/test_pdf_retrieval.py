@@ -63,3 +63,34 @@ def test_answer_style_instructions_do_not_hide_separate_financial_statements():
             assert returned == set(statements)
 
     asyncio.run(scenario())
+
+
+def test_an_explicit_statement_remains_retrievable_when_a_named_cost_is_absent():
+    async def scenario():
+        statement = "ACME_2026\nConsolidated Statement of Income\nNet sales 900. Operating income 300. Net income 200."
+        notes = tuple(
+            f"ACME_2026\nNote {number}\nRestructuring costs directly outlined in income statements for 2026. "
+            "Restructuring costs and income are discussed in these detailed notes.\n"
+            "Hedging instruments\nLosses and gains\nRecognized in\nIncome Statement\nOther columns"
+            for number in range(30)
+        )
+        async with open_builtin_runtime(BuiltinConfig()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(
+                    title="Statement focus", summary="Primary statement retrieval", idempotency_key="statement-focus"
+                )
+            )
+            memory = runtime.memory.for_scope(scope.scope_id)
+            await memory.remember(
+                RememberMemoryRequest(
+                    entries=tuple(MemoryEntryInput(kind="document", text=text) for text in (statement, *notes))
+                )
+            )
+            citations = await search_pdf_pages(
+                memory, "What restructuring costs are directly outlined in ACME's income statements for 2026?", limit=1
+            )
+            assert len(citations) == 1
+            assert (await memory.get(GetMemoryEntryRequest(citation=citations[0]))).entry.text == statement
+
+    asyncio.run(scenario())
