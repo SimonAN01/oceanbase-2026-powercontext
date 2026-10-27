@@ -101,9 +101,10 @@ def test_answer_style_instructions_do_not_hide_separate_financial_statements():
 
 
 @pytest.mark.parametrize("statement_name", ["income statements", "P&L", "statements of operations"])
-def test_an_explicit_statement_remains_retrievable_when_a_named_cost_is_absent(statement_name):
+@pytest.mark.parametrize("heading", ["Consolidated Statement of Income", "Statements of\nConsolidated Income"])
+def test_an_explicit_statement_remains_retrievable_when_a_named_cost_is_absent(statement_name, heading):
     async def scenario():
-        statement = "ACME_2026\nConsolidated Statement of Income\nNet sales 900. Operating income 300. Net income 200."
+        statement = f"ACME_2026\n{heading}\nNet sales 900. Operating income 300. Net income 200."
         notes = tuple(
             f"ACME_2026\nNote {number}\nRestructuring costs directly outlined in income statements for 2026. "
             "Restructuring costs and income are discussed in these detailed notes.\n"
@@ -126,6 +127,32 @@ def test_an_explicit_statement_remains_retrievable_when_a_named_cost_is_absent(s
             )
             assert len(citations) == 1
             assert (await memory.get(GetMemoryEntryRequest(citation=citations[0]))).entry.text == statement
+
+    asyncio.run(scenario())
+
+
+def test_numeric_abbreviation_retrieves_formula_inputs_without_an_explicit_statement_name():
+    async def scenario():
+        cash_pages = (
+            "ACME_2026\nConsolidated Statements of Cash Flows\nNet cash from operating activities 300.",
+            "ACME_2026\nConsolidated Statements of Cash Flows (continued)\nPurchases of property and equipment 40.",
+        )
+        other_statements = (
+            "ACME_2026\nConsolidated Balance Sheets\nAssets 1000. Liabilities 400.",
+            "ACME_2026\nConsolidated Statements of Income\nNet income 200. Sales 900.",
+        )
+        notes = tuple(f"ACME_2026\nNote {number}\nFCF for ACME FY2026." for number in range(30))
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Numeric query", summary="Raw metric abbreviation", idempotency_key="numeric")
+            )
+            memory = runtime.memory.for_scope(scope.scope_id)
+            await _store_pages(runtime, scope.scope_id, (*cash_pages, *other_statements, *notes))
+            citations = await search_pdf_pages(memory, "What is the FY2026 FCF for ACME?", limit=20)
+            entries = [(await memory.get(GetMemoryEntryRequest(citation=citation))).entry for citation in citations]
+            assert set(cash_pages).issubset({entry.text for entry in entries})
+            assert len({entry.sources[0].source_id for entry in entries}) == len(citations) == 20
 
     asyncio.run(scenario())
 

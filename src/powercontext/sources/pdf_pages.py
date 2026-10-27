@@ -178,28 +178,50 @@ _STATEMENT_QUERIES = {
     ),
 }
 _STATEMENT_SEARCH_TERMS = {"income": "income earnings", "cash": "cash flows", "balance": "assets liabilities"}
+_NUMERIC_QUESTION = re.compile(
+    r"\b(?:calculate|compute|ratio|margin|growth|turnover|percent(?:age)?|amount|quantity|costs?|expenses?"
+    r"|ebitda?|capex|fcf|eps|nwc|roic|revenue|sales|profit|income|earnings|debt|liquidity|leverage"
+    r"|assets|liabilities|equity|inventory|dividends)\b|%|\b(?:how much|return on)\b"
+)
 _STATEMENT_PREFIX = r"^(?:(?:consolidated|combined|condensed)\s+){0,2}"
+_INNER_QUALIFIER = r"(?:(?:consolidated|combined|condensed)\s+)?"
 _STATEMENT_HEADINGS = {
     "income": re.compile(
-        _STATEMENT_PREFIX + r"(?:statements?\s+of\s+(?:income|operations|earnings)|income\s+statements?)\b"
+        _STATEMENT_PREFIX
+        + r"(?:statements?\s+of\s+"
+        + _INNER_QUALIFIER
+        + r"(?:income|operations|earnings)|income\s+statements?)\b"
     ),
-    "cash": re.compile(_STATEMENT_PREFIX + r"(?:statements?\s+of\s+cash\s*flows?|cash\s*flow\s*statements?)\b"),
-    "balance": re.compile(_STATEMENT_PREFIX + r"(?:balance\s*sheets?|statements?\s+of\s+financial\s+position)\b"),
+    "cash": re.compile(
+        _STATEMENT_PREFIX + r"(?:statements?\s+of\s+" + _INNER_QUALIFIER + r"cash\s*flows?|cash\s*flow\s*statements?)\b"
+    ),
+    "balance": re.compile(
+        _STATEMENT_PREFIX + r"(?:balance\s*sheets?|statements?\s+of\s+" + _INNER_QUALIFIER + r"financial\s+position)\b"
+    ),
 }
+
+
+def _statement_focus(question: str) -> tuple[str, ...]:
+    question = question.casefold()
+    explicit = tuple(kind for kind, pattern in _STATEMENT_QUERIES.items() if pattern.search(question))
+    # A numeric metric may name no statement at all. Its formula inputs still
+    # come from the primary statements, rather than notes repeating its acronym.
+    return explicit or (tuple(_STATEMENT_QUERIES) if _NUMERIC_QUESTION.search(question) else ())
 
 
 def _statement_page(text: str, focus: tuple[str, ...]) -> bool:
     headings = [line for line in text.splitlines()[1:12] if line.strip()]
-    for position, line in enumerate(headings):
-        heading = " ".join(line.casefold().split())
-        if len(heading.split()) > 12 or re.search(r"\.(?:\s*\.)+", heading):
-            continue
-        # A column labelled "Income Statement" in a later footnote is not a
-        # primary statement title. Consolidated titles can follow longer headers.
-        if position > 3 and not re.match(r"(?:consolidated|combined|condensed)\b", heading):
-            continue
-        if any(_STATEMENT_HEADINGS[kind].search(heading) for kind in focus):
-            return True
+    for position in range(len(headings)):
+        for width in (1, 2):
+            heading = " ".join(" ".join(headings[position : position + width]).casefold().split())
+            if len(heading.split()) > 12 or re.search(r"\.(?:\s*\.)+", heading):
+                continue
+            # A column labelled "Income Statement" in a later footnote is not a
+            # primary title. Formal statement titles can follow longer headers.
+            if position > 3 and not re.match(r"(?:consolidated|combined|condensed|statements?)\b", heading):
+                continue
+            if any(_STATEMENT_HEADINGS[kind].search(heading) for kind in focus):
+                return True
     return False
 
 
@@ -211,7 +233,7 @@ def _rank_pages(hits: tuple[MemoryHit, ...], query: str, expansion: str, questio
     frequency: Counter[str] = Counter(term for document in documents for term in document)
     weights = dict.fromkeys(_terms(expansion), 0.35)
     weights.update(dict.fromkeys(_terms(query), 1.0))
-    focus = tuple(kind for kind, pattern in _STATEMENT_QUERIES.items() if pattern.search(question.casefold()))
+    focus = _statement_focus(question)
 
     def score(index: int) -> float:
         document = documents[index]
@@ -242,11 +264,7 @@ def _queries(question: str) -> tuple[str, str, tuple[str, ...]]:
     concepts = tuple(
         dict.fromkeys(_FINANCIAL_EXPANSIONS[term] for term in _terms(question) if term in _FINANCIAL_EXPANSIONS)
     )
-    statement_terms = tuple(
-        _STATEMENT_SEARCH_TERMS[kind]
-        for kind, pattern in _STATEMENT_QUERIES.items()
-        if pattern.search(question.casefold())
-    )
+    statement_terms = tuple(_STATEMENT_SEARCH_TERMS[kind] for kind in _statement_focus(question))
     phrases = re.findall(
         r"\b(?:operating income|net income|cash flows?|balance sheets?|income statements?|capital expenditures"
         r"|(?:current|total) (?:assets|liabilities|equity)|(?:shareholders?|stockholders?)[\s\u2019']+equity"
