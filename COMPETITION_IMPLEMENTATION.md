@@ -9,7 +9,7 @@
 | 仓库准备，10 分 | 保留冻结基线历史，仓库可匿名读取 | `check-baseline`；匿名 GitHub 仓库及指定 commit 查询 |
 | CSV 行证据，20 分 | `sources/csv_rows.py`：完整校验、稳定行身份、原始字段及文本投影 | 17 项通过 |
 | Pi 会话，20 分 | `sources/pi_session.py`：完整事件树校验、可见内容、分支切换、持久化 checkpoint 及历史改写检测 | 15 项通过 |
-| PDF 页检索，50 分 | `sources/pdf_pages.py`：全部物理页、空白页、空密码权限、全文摘要、页级 Source；公开 Memory 搜索、数值问题的报表候选补全、公式词项扩展、跨行标题、离线重排及按实际 Source 去重 | 6 项通过；完整解析并持久化 503 页公开财报 |
+| PDF 页检索，50 分 | `sources/pdf_pages.py`：全部物理页、空白页、空密码权限、全文摘要、页级 Source；公开 Memory 搜索、数值问题的报表候选补全、分部与地理词项、短查询、跨行标题、离线重排及按实际 Source 去重 | 6 项通过；完整解析并持久化 503 页公开财报 |
 | HTTP 重排，20 分 | `builtin/artifacts/memory/http_reranker.py`：原始全局序号、有限批次、响应严格校验、稳定排序和真实 usage | 10 项通过 |
 | 增量上下文，20 分 | `builtin/runtime/context_pack.py` 及 `prepare_incremental`：UTF-8 分块、规范 JSON/Base64、摘要、协议字节数和独立重建 | 14 项通过 |
 | 计数触发，20 分 | Runtime 配置及原生 supervisor：按 scope/family 成功 cursor 后的 journal 身份计数，与时间条件取 OR；保留原有窗口、wave 和重试 | 17 项通过 |
@@ -20,7 +20,7 @@
 
 上述 10 个代码题自测共 **95 项通过**，使用 `competition/requirements.txt` 的固定 Linux x86_64 / Python 3.12 环境执行。公开自测文件和输入保持原样。
 
-另增加了项目回归，检查生命周期传播中途发生真实 Memory 写入异常后的重启恢复、完成事件重放不产生新 Memory revision、Unicode/JSON 引用预算、不同 scope 的相同身份，以及长回答格式指令不遮蔽财务报表检索。PDF 的 9 项回归通过真实 Source observation、入库和 Memory 回查，覆盖同页多个条目、非 PDF 条目排除、显式报表优先、跨行标题、P&L / statements of operations 等报表别名、ROA/ROE 公式输入及未指明报表名称的 FCF 问题。HTTP 的 `evidence_selection` 字段从 OpenAPI 生成，默认关闭。
+另增加了项目回归，检查生命周期传播中途发生真实 Memory 写入异常后的重启恢复、完成事件重放不产生新 Memory revision、Unicode/JSON 引用预算、不同 scope 的相同身份，以及长回答格式指令不遮蔽财务报表检索。PDF 的 10 项回归通过真实 Source observation、入库和 Memory 回查，覆盖同页多个条目、非 PDF 条目排除、显式报表优先、跨行标题、P&L / statements of operations 等报表别名、ROA/ROE 公式输入、未指明报表名称的 FCF 问题，以及地理问题召回报告分部页。HTTP 的 `evidence_selection` 字段从 OpenAPI 生成，默认关闭。
 
 ## 40 轮传输成本测量
 

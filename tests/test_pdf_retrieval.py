@@ -157,6 +157,31 @@ def test_numeric_abbreviation_retrieves_formula_inputs_without_an_explicit_state
     asyncio.run(scenario())
 
 
+def test_geographic_question_can_retrieve_a_reportable_divisions_page():
+    async def scenario():
+        divisions = (
+            "ACME_2026\nOperating Divisions\nWe are organized into three reportable segments. "
+            "North serves Canada. East serves Japan. West serves France."
+        )
+        notes = tuple(f"ACME_2026\nNote {number}\nACME FY2026 accounting policies." for number in range(30))
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Geographies", summary="Literal reporting segments", idempotency_key="geographies")
+            )
+            memory = runtime.memory.for_scope(scope.scope_id)
+            await _store_pages(runtime, scope.scope_id, (divisions, *notes))
+            citations = await search_pdf_pages(
+                memory, "What are the geographies that ACME primarily operates in as of FY2026?", limit=20
+            )
+            returned = {
+                (await memory.get(GetMemoryEntryRequest(citation=citation))).entry.text for citation in citations
+            }
+            assert divisions in returned
+
+    asyncio.run(scenario())
+
+
 def test_ratio_definitions_retrieve_distinct_pages_among_commentary_and_non_pdf_entries():
     async def scenario():
         statements = (

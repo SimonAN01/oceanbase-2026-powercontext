@@ -156,8 +156,8 @@ _FINANCIAL_EXPANSIONS = {
     "revenue": "sales revenues",
     "sales": "revenue revenues",
     "restructuring": "restructuring impairment charges expenses",
-    "geography": "geographic geographical countries regions international",
-    "geographies": "geographic geographical countries regions international",
+    "geography": "geographic geographical countries regions international worldwide segments divisions",
+    "geographies": "geographic geographical countries regions international worldwide segments divisions",
     "legal": "litigation contingencies proceedings settlements",
 }
 
@@ -264,7 +264,17 @@ def _queries(question: str) -> tuple[str, str, tuple[str, ...]]:
     concepts = tuple(
         dict.fromkeys(_FINANCIAL_EXPANSIONS[term] for term in _terms(question) if term in _FINANCIAL_EXPANSIONS)
     )
-    statement_terms = tuple(_STATEMENT_SEARCH_TERMS[kind] for kind in _statement_focus(question))
+    focus = _statement_focus(question)
+    statement_terms = tuple(_STATEMENT_SEARCH_TERMS[kind] for kind in focus)
+    concept_queries: list[str] = []
+    for concept in concepts:
+        if focus:
+            concept_queries.append(concept)
+        else:
+            # A narrative evidence page may use just one of the topic synonyms.
+            # Keep these queries short enough for Memory's lexical admission.
+            words = concept.split()
+            concept_queries.extend(" ".join(words[index : index + 2]) for index in range(0, len(words), 2))
     phrases = re.findall(
         r"\b(?:operating income|net income|cash flows?|balance sheets?|income statements?|capital expenditures"
         r"|(?:current|total) (?:assets|liabilities|equity)|(?:shareholders?|stockholders?)[\s\u2019']+equity"
@@ -273,7 +283,7 @@ def _queries(question: str) -> tuple[str, str, tuple[str, ...]]:
     )
     # Separate short concept queries prevent a long instruction from imposing a
     # lexical coverage floor that suppresses a table containing only one input.
-    queries = tuple(dict.fromkeys(value for value in (primary, *concepts, *phrases, *statement_terms) if value))
+    queries = tuple(dict.fromkeys(value for value in (primary, *concept_queries, *phrases, *statement_terms) if value))
     return primary, " ".join((*concepts, *phrases, *statement_terms)), queries
 
 
