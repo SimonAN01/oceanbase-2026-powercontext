@@ -20,7 +20,7 @@
 
 上述 10 个代码题自测共 **95 项通过**，使用 `competition/requirements.txt` 的固定 Linux x86_64 / Python 3.12 环境执行。公开自测文件和输入保持原样。
 
-另增加了项目回归，检查生命周期传播中途发生真实 Memory 写入异常后的重启恢复、完成事件重放不产生新 Memory revision、Unicode/JSON 引用预算、不同 scope 的相同身份，以及长回答格式指令不遮蔽财务报表检索。PDF 回归通过真实 Source observation、入库和 Memory 回查，覆盖同页多个条目、非 PDF 条目排除、显式报表优先及 ROA/ROE 公式输入检索。HTTP 的 `evidence_selection` 字段从 OpenAPI 生成，默认关闭。
+另增加了项目回归，检查生命周期传播中途发生真实 Memory 写入异常后的重启恢复、完成事件重放不产生新 Memory revision、Unicode/JSON 引用预算、不同 scope 的相同身份，以及长回答格式指令不遮蔽财务报表检索。PDF 的 5 项回归通过真实 Source observation、入库和 Memory 回查，覆盖同页多个条目、非 PDF 条目排除、显式报表优先、P&L / statements of operations 等报表别名及 ROA/ROE 公式输入检索。HTTP 的 `evidence_selection` 字段从 OpenAPI 生成，默认关闭。
 
 ## 40 轮传输成本测量
 

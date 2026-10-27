@@ -100,7 +100,8 @@ def test_answer_style_instructions_do_not_hide_separate_financial_statements():
     asyncio.run(scenario())
 
 
-def test_an_explicit_statement_remains_retrievable_when_a_named_cost_is_absent():
+@pytest.mark.parametrize("statement_name", ["income statements", "P&L", "statements of operations"])
+def test_an_explicit_statement_remains_retrievable_when_a_named_cost_is_absent(statement_name):
     async def scenario():
         statement = "ACME_2026\nConsolidated Statement of Income\nNet sales 900. Operating income 300. Net income 200."
         notes = tuple(
@@ -119,7 +120,9 @@ def test_an_explicit_statement_remains_retrievable_when_a_named_cost_is_absent()
             memory = runtime.memory.for_scope(scope.scope_id)
             await _store_pages(runtime, scope.scope_id, (statement, *notes))
             citations = await search_pdf_pages(
-                memory, "What restructuring costs are directly outlined in ACME's income statements for 2026?", limit=1
+                memory,
+                f"What restructuring costs are directly outlined in ACME's {statement_name} for FY2026?",
+                limit=1,
             )
             assert len(citations) == 1
             assert (await memory.get(GetMemoryEntryRequest(citation=citations[0]))).entry.text == statement

@@ -177,6 +177,7 @@ _STATEMENT_QUERIES = {
         r"|\b(?:current|quick) ratio\b|\bworking capital\b"
     ),
 }
+_STATEMENT_SEARCH_TERMS = {"income": "income earnings", "cash": "cash flows", "balance": "assets liabilities"}
 _STATEMENT_PREFIX = r"^(?:(?:consolidated|combined|condensed)\s+){0,2}"
 _STATEMENT_HEADINGS = {
     "income": re.compile(
@@ -241,6 +242,11 @@ def _queries(question: str) -> tuple[str, str, tuple[str, ...]]:
     concepts = tuple(
         dict.fromkeys(_FINANCIAL_EXPANSIONS[term] for term in _terms(question) if term in _FINANCIAL_EXPANSIONS)
     )
+    statement_terms = tuple(
+        _STATEMENT_SEARCH_TERMS[kind]
+        for kind, pattern in _STATEMENT_QUERIES.items()
+        if pattern.search(question.casefold())
+    )
     phrases = re.findall(
         r"\b(?:operating income|net income|cash flows?|balance sheets?|income statements?|capital expenditures"
         r"|(?:current|total) (?:assets|liabilities|equity)|(?:shareholders?|stockholders?)[\s\u2019']+equity"
@@ -249,8 +255,8 @@ def _queries(question: str) -> tuple[str, str, tuple[str, ...]]:
     )
     # Separate short concept queries prevent a long instruction from imposing a
     # lexical coverage floor that suppresses a table containing only one input.
-    queries = tuple(dict.fromkeys(value for value in (primary, *concepts, *phrases) if value))
-    return primary, " ".join((*concepts, *phrases)), queries
+    queries = tuple(dict.fromkeys(value for value in (primary, *concepts, *phrases, *statement_terms) if value))
+    return primary, " ".join((*concepts, *phrases, *statement_terms)), queries
 
 
 async def search_pdf_pages(
