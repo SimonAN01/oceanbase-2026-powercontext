@@ -114,6 +114,7 @@ class ArtifactProcessingBinding:
     timezone: str = "Asia/Shanghai"
     config_prefix: str | None = None
     pending_provider: ArtifactProcessingPendingProvider | None = None
+    source_count_threshold: int | None = None
     # Only automatic admission is filtered; already accepted requests retain
     # their own Worker authorization and domain completion semantics.
     automatic_scope_filter: Callable[[AsyncConnection, tuple[str, ...]], Awaitable[frozenset[str]]] | None = None
@@ -131,6 +132,7 @@ class ArtifactProcessingBinding:
             raise ValueError("max_workers must be a positive integer")  # noqa: TRY003
         if self.worker_timeout_seconds <= 0:
             raise ValueError("worker_timeout_seconds must be positive")  # noqa: TRY003
+        _validate_count_threshold(self.source_count_threshold)
         if self.automatic_processing_interval is not None:
             if self.automatic_processing_interval.total_seconds() <= 0:
                 raise ValueError("automatic interval must be positive")  # noqa: TRY003
@@ -138,6 +140,11 @@ class ArtifactProcessingBinding:
                 raise ValueError("interval and cron cannot both be enabled")  # noqa: TRY003
         if self.cron is not None:
             CronTrigger.from_crontab(self.cron, timezone=ZoneInfo(self.timezone))
+
+
+def _validate_count_threshold(value: int | None) -> None:
+    if value is not None and (type(value) is not int or value < 1):
+        raise ValueError("source count threshold must be a positive integer")  # noqa: TRY003
 
 
 class _WorkerResultSender(Protocol):
@@ -643,9 +650,12 @@ class ArtifactProcessingSupervisor:
             state.reconcile_after = await binding.pending_provider.reconcile(
                 state.reconcile_after, _DISCOVERY_PAGE_SIZE, fence=self._require_current_fence()
             )
-            state.reconcile_complete = state.reconcile_after is None
+            state.reconcile_complete = state.reconcile_after is None and binding.source_count_threshold is None
             if not state.reconcile_complete:
-                state.next_discovery_at = loop.time() + _DISCOVERY_PAGE_DELAY_SECONDS
+                delay = self._tick if state.reconcile_after is None else _DISCOVERY_PAGE_DELAY_SECONDS
+                state.next_discovery_at = loop.time() + delay
+            if binding.source_count_threshold is not None:
+                state.discovery_pending = True
         else:
             state.reconcile_complete = True
         # Alternate discovery channels so explicit traffic cannot monopolize admission.

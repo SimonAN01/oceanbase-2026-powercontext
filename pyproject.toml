@@ -95,6 +95,9 @@ cli = [
     "pyyaml>=6,<7",
     "typer>=0.16,<1",
 ]
+pdf = [
+    "pypdf>=6.19,<7",
+]
 
 [project.scripts]
 powercontext = "powercontext.cli.app:main"
@@ -178,6 +181,8 @@ extra-paths = [
 
 [tool.ty.src]
 exclude = [
+    # Frozen external judge fixtures are checked by make -C competition test.
+    "competition",
     # Optional Jupyter dependencies and notebook state are validated by notebooks-test.
     "examples/jupyter",
     "e2e/bub",

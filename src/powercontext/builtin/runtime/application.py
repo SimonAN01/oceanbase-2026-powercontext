@@ -166,6 +166,7 @@ from powercontext.builtin.runtime._scope_cache import (
     ScopeCacheObserver,
     ScopeEvictor,
 )
+from powercontext.builtin.runtime.context_pack import ContextPack, ContextPackDelta, ContextPackError
 from powercontext.builtin.runtime.decision_model import DecisionModel
 from powercontext.builtin.runtime.errors import InvalidRuntimeRequestError, TopicMemoryProcessingUnavailableError
 from powercontext.builtin.runtime.models import (
@@ -248,6 +249,7 @@ from powercontext.builtin.runtime.recall_sufficiency import (
     build_recall_candidates,
     recall_effort,
 )
+from powercontext.builtin.runtime.source_lifecycle import SourceLifecycleApplication
 from powercontext.builtin.runtime.statistics import RelationalScopedStatistics, overview_selection
 from powercontext.builtin.scope import ScopeApplication, ScopeDescriptor, ScopeSelection
 from powercontext.builtin.scope.subject_sources import SubjectSourceService
@@ -298,6 +300,7 @@ if TYPE_CHECKING:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
     from powercontext.builtin.handoff_report.application import HandoffReportApplication
+    from powercontext.builtin.persistence.database import AsyncDatabase
     from powercontext.builtin.runtime.artifact_processing import ArtifactProcessingSupervisors
 
 
@@ -827,6 +830,20 @@ class ScopedContextApplication:
     def __init__(self, runtime: BuiltinRuntime, scope_id: str) -> None:
         self._runtime = runtime
         self.scope_id = validate_scope_id(scope_id)
+
+    async def prepare_incremental(
+        self,
+        request: PrepareContextRequest,
+        base_pack: ContextPack | None = None,
+        *,
+        authorize_scopes: Callable[[tuple[str, ...]], Awaitable[None]] | None = None,
+    ) -> ContextPack | ContextPackDelta:
+        """Encode ordinary preparation without changing content or authorization."""
+        if base_pack is not None and not isinstance(base_pack, ContextPack):
+            raise ContextPackError("invalid-base-pack")
+        prepared = await self.prepare(request, authorize_scopes=authorize_scopes)
+        target = ContextPack.from_content(prepared.content or "")
+        return target if base_pack is None else ContextPackDelta.between(base_pack, target)
 
     async def prepare(
         self,
@@ -2977,6 +2994,7 @@ class BuiltinRuntime:
         *,
         provider: PowerContextProvider[BuiltinSources, BuiltinArtifacts, BuiltinTriggers],
         capabilities: RuntimeCapabilities,
+        lifecycle_database: AsyncDatabase | None = None,
         code_service: CodeService | None = None,
         source_window_limit: int = 100,
         context_assembly_max_entries: int = 8,
@@ -3100,6 +3118,7 @@ class BuiltinRuntime:
         self._scheduler: AsyncIOScheduler | None = None
         self._scheduler_runtime_key: str | None = None
         self.sources = SourceApplication(self)
+        self.lifecycle = SourceLifecycleApplication(self, lifecycle_database)
         self.ingestion = RemoteIngestionApplication(self, remote_ingestion)
         self.code = CodeApplication(self, code_service or CodeService(CodeConfig()))
         self.context = ContextApplication(self)

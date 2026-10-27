@@ -1,3 +1,6 @@
+# Published judge inputs stay byte-for-byte unchanged; execute their own self-tests.
+exclude: ^competition/
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: "v6.0.0"

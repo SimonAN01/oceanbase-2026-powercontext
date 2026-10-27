@@ -48,10 +48,17 @@ async def enabled_profile_scopes(connection: AsyncConnection, scope_ids: tuple[s
 class SourceProcessingPendingProvider:
     """Inspect journal metadata, never Source bodies, prompts, or models."""
 
-    def __init__(self, database: AsyncDatabase, binding_name: str, artifact_family: str) -> None:
+    def __init__(
+        self,
+        database: AsyncDatabase,
+        binding_name: str,
+        artifact_family: str,
+        source_count_threshold: int | None = None,
+    ) -> None:
         self._database = database
         self._binding = binding_name
         self._family = artifact_family
+        self._threshold = source_count_threshold
 
     async def reconcile(self, after_scope_id: str | None, limit: int, *, fence: ArtifactProcessingFence) -> str | None:
         heads = SOURCE_JOURNAL_HEADS_TABLE
@@ -72,5 +79,14 @@ class SourceProcessingPendingProvider:
                     continue
                 intent = await intents.load(connection, scope, self._binding, for_update=True)
                 if intent is None or intent.dirty_generation == intent.clean_generation:
-                    await intents.mark_dirty(connection, scope, self._binding)
+                    intent = await intents.mark_dirty(connection, scope, self._binding)
+                pending = int(high) - (0 if cursor is None else cursor.cursor.sequence)
+                if (
+                    self._threshold is not None
+                    and pending >= self._threshold
+                    and intent.requested_generation == intent.handled_generation
+                ):
+                    # Durable acceptance precedes spawning. Failures keep this invocation
+                    # pending; successful Memory windows re-evaluate the new cursor.
+                    await intents.request(connection, scope, self._binding)
         return str(rows[-1][0]) if len(rows) == limit else None
