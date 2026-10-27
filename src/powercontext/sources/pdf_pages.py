@@ -210,7 +210,11 @@ def _statement_focus(question: str) -> tuple[str, ...]:
 
 
 def _statement_page(text: str, focus: tuple[str, ...]) -> bool:
-    headings = [line for line in text.splitlines()[1:12] if line.strip()]
+    if not focus:
+        return False
+    # PDF drawing order can put a visual page heading after the entire table.
+    # Formal statement titles must remain recognizable anywhere on the page.
+    headings = [line for line in text.splitlines()[1:] if line.strip()]
     for position in range(len(headings)):
         for width in (1, 2):
             heading = " ".join(" ".join(headings[position : position + width]).casefold().split())
@@ -220,8 +224,14 @@ def _statement_page(text: str, focus: tuple[str, ...]) -> bool:
             # primary title. Formal statement titles can follow longer headers.
             if position > 3 and not re.match(r"(?:consolidated|combined|condensed|statements?)\b", heading):
                 continue
-            if any(_STATEMENT_HEADINGS[kind].search(heading) for kind in focus):
-                return True
+            for kind in focus:
+                match = _STATEMENT_HEADINGS[kind].search(heading)
+                if match and re.fullmatch(
+                    r"(?:\s+and\s+(?:comprehensive\s+(?:income|loss)|retained\s+earnings))?"
+                    r"(?:\s*\([^)]*\))*\s*(?:[-\u2013\u2014]?\s*continued)?[.:]?",
+                    heading[match.end() :],
+                ):
+                    return True
     return False
 
 
@@ -234,6 +244,20 @@ def _rank_pages(hits: tuple[MemoryHit, ...], query: str, expansion: str, questio
     weights = dict.fromkeys(_terms(expansion), 0.35)
     weights.update(dict.fromkeys(_terms(query), 1.0))
     focus = _statement_focus(question)
+    query_words = re.findall(r"[a-z0-9]+", question.casefold())
+    query_identity = {
+        "".join(query_words[start : start + width])
+        for start in range(len(query_words))
+        for width in range(1, min(4, len(query_words) - start) + 1)
+    }
+    filing_words = {"10k", "10q", "8k", "annual", "annualreport", "report", "earnings", "dated"}
+    named_documents = tuple(
+        any(
+            len(word) > 1 and re.search(r"[a-z]", word) and word not in filing_words and word in query_identity
+            for word in re.findall(r"[a-z0-9]+", hit.text.partition("\n")[0].casefold())
+        )
+        for hit in hits
+    )
 
     def score(index: int) -> float:
         document = documents[index]
@@ -252,7 +276,12 @@ def _rank_pages(hits: tuple[MemoryHit, ...], query: str, expansion: str, questio
         hits[index]
         for index in sorted(
             range(len(hits)),
-            key=lambda index: (-int(_statement_page(hits[index].text, focus)), -score(index), index),
+            key=lambda index: (
+                -int(named_documents[index]),
+                -int(_statement_page(hits[index].text, focus)),
+                -score(index),
+                index,
+            ),
         )
     )
 

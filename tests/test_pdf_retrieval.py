@@ -182,6 +182,59 @@ def test_geographic_question_can_retrieve_a_reportable_divisions_page():
     asyncio.run(scenario())
 
 
+def test_statement_title_drawn_after_table_is_still_recognized():
+    async def scenario():
+        rows = "\n".join(f"Revenue category {number} Amount 100" for number in range(18))
+        statement = (
+            f"ACME_2026\nNet sales 900. Operating income 300. Net income 200.\n{rows}\nConsolidated Statement of Income"
+        )
+        notes = tuple(
+            f"ACME_2026\nNote {number}\nRestructuring costs directly outlined in income statements FY2026."
+            for number in range(30)
+        )
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Drawing order", summary="Title after table", idempotency_key="drawing-order")
+            )
+            memory = runtime.memory.for_scope(scope.scope_id)
+            await _store_pages(runtime, scope.scope_id, (statement, *notes))
+            citations = await search_pdf_pages(
+                memory,
+                "What restructuring costs are directly outlined in ACME's income statements for FY2026?",
+                limit=1,
+            )
+            assert len(citations) == 1
+            assert (await memory.get(GetMemoryEntryRequest(citation=citations[0]))).entry.text == statement
+
+    asyncio.run(scenario())
+
+
+def test_a_note_caption_about_statement_locations_is_not_a_primary_statement_title():
+    async def scenario():
+        statement = "ACME_2026\nConsolidated Statement of Income\nNet sales 900. Operating income 300."
+        notes = tuple(
+            f"ACME_2026\nNote {number}\nConsolidated statement of income location and impact of derivative instruments\n"
+            "Restructuring costs directly outlined in income statements FY2026."
+            for number in range(30)
+        )
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Table captions", summary="Full formal titles", idempotency_key="table-captions")
+            )
+            memory = runtime.memory.for_scope(scope.scope_id)
+            await _store_pages(runtime, scope.scope_id, (statement, *notes))
+            citations = await search_pdf_pages(
+                memory,
+                "What restructuring costs are directly outlined in ACME's income statements for FY2026?",
+                limit=1,
+            )
+            assert (await memory.get(GetMemoryEntryRequest(citation=citations[0]))).entry.text == statement
+
+    asyncio.run(scenario())
+
+
 def test_ratio_definitions_retrieve_distinct_pages_among_commentary_and_non_pdf_entries():
     async def scenario():
         statements = (

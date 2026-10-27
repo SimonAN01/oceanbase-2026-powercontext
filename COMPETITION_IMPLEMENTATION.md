@@ -1,6 +1,6 @@
 # PowerContext 2026 参赛实现与验证
 
-日期：2026-10-27。实现基于冻结版本 `9db1753434162c0aa7c9f1189a1722e617880a52`，保留原始提交历史。CSV 基线位于 `competition/csv-evidence`；集成实现及 PDF 检索改进位于 `competition/pdf-financial-recall-20261027`。
+日期：2026-10-27。实现基于冻结版本 `9db1753434162c0aa7c9f1189a1722e617880a52`，保留原始提交历史。CSV 基线位于 `competition/csv-evidence`；集成实现及 PDF 检索改进位于 `competition/pdf-layout-order-20261027`。
 
 ## 功能
 
@@ -20,7 +20,9 @@
 
 上述 10 个代码题自测共 **95 项通过**，使用 `competition/requirements.txt` 的固定 Linux x86_64 / Python 3.12 环境执行。公开自测文件和输入保持原样。
 
-另增加了项目回归，检查生命周期传播中途发生真实 Memory 写入异常后的重启恢复、完成事件重放不产生新 Memory revision、Unicode/JSON 引用预算、不同 scope 的相同身份，以及长回答格式指令不遮蔽财务报表检索。PDF 的 10 项回归通过真实 Source observation、入库和 Memory 回查，覆盖同页多个条目、非 PDF 条目排除、显式报表优先、跨行标题、P&L / statements of operations 等报表别名、ROA/ROE 公式输入、未指明报表名称的 FCF 问题，以及地理问题召回报告分部页。HTTP 的 `evidence_selection` 字段从 OpenAPI 生成，默认关闭。
+另增加了项目回归，检查生命周期传播中途发生真实 Memory 写入异常后的重启恢复、完成事件重放不产生新 Memory revision、Unicode/JSON 引用预算、不同 scope 的相同身份，以及长回答格式指令不遮蔽财务报表检索。PDF 的 12 项回归通过真实 Source observation、入库和 Memory 回查，覆盖同页多个条目、非 PDF 条目排除、显式报表优先、跨行标题、P&L / statements of operations 等报表别名、ROA/ROE 公式输入、未指明报表名称的 FCF 问题、地理问题召回报告分部页、标题在 PDF 绘制顺序中位于表格之后，以及附注标题包含报表名称但不是主报表的情形。HTTP 的 `evidence_selection` 字段从 OpenAPI 生成，默认关闭。
+
+另将固定版本的 3M 2022 与 JPMorgan 2022 原始财报混合入库，共 634 页。根据原 PDF 报表标题自行构造的 8 个查询均召回所需报表，并逐条回查真实引用。该检查不加载 FinanceBench 答案或证据标注，不能替代平台的完整质量验收。JPMorgan 的主报表标题在默认文本提取中位于页末，因此标题识别覆盖全页的完整正式短标题，不依赖提取文本前若干行；排序同时利用投影中实际文档身份与问题中的名称对应关系，减少混合文档相互挤占候选名额。
 
 ## 40 轮传输成本测量
 
