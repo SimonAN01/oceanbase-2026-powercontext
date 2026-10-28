@@ -155,6 +155,38 @@ def test_latin_presentation_ligature_expands_without_altering_other_unicode():
     assert "Secfion" in pages[0].text
 
 
+@pytest.mark.parametrize("rotation", ["1 0 0 1", "0 1 -1 0"])
+def test_new_text_object_separates_columns_before_showing_kerned_words(rotation):
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    writer = pypdf.PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+    font = DictionaryObject({
+        NameObject("/Type"): NameObject("/Font"),
+        NameObject("/Subtype"): NameObject("/Type1"),
+        NameObject("/BaseFont"): NameObject("/Courier"),
+    })
+    page[NameObject("/Resources")] = DictionaryObject({
+        NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})
+    })
+    stream = DecodedStreamObject()
+    stream.set_data(
+        (
+            f"q {rotation} 36 400 cm BT /F1 12 Tf (Column) Tj ET Q "
+            f"q {rotation} 240 600 cm BT /F1 12 Tf [(Financi) -10 (al data)] TJ ET Q "
+            "q 1 0 0 1 36 300 cm BT /F1 12 Tf [(Net) -600 (income)] TJ ET Q"
+        ).encode()
+    )
+    page[NameObject("/Contents")] = stream
+    output = io.BytesIO()
+    writer.write(output)
+    pages = parse_pdf_document(PDFDocumentInput(document_id="constructed-text-objects", content=output.getvalue()))
+    assert "Financial data" in pages[0].text
+    assert "Net income" in pages[0].text
+    assert "Column" in pages[0].text
+
+
 @pytest.mark.parametrize("inside_nested_forms", [False, True])
 def test_unused_trailing_text_advance_does_not_split_words_or_drop_rotated_text(inside_nested_forms):
     pypdf = pytest.importorskip("pypdf")

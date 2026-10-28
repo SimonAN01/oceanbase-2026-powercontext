@@ -83,13 +83,29 @@ class PDFPageSource(Source, PDFPageInput):
         return self
 
 
-def _strip_unused_text_advances(stream: ContentStream) -> bool:
+def _normalize_text_positions(stream: ContentStream) -> bool:
     from pypdf.generic import FloatObject, NumberObject
 
     operations = stream.operations
+    normalized = []
     changed = False
-    for index, (operands, operator) in enumerate(operations[:-1]):
-        if operator == b"TJ" and operations[index + 1][1] == b"ET":
+    unpositioned = False
+    for index, (operands, operator) in enumerate(operations):
+        following = operations[index + 1][1] if index + 1 < len(operations) else None
+        if operator == b"BT":
+            unpositioned = True
+        elif operator in (b"Tm", b"Td", b"TD", b"T*", b"'", b'"', b"ET"):
+            unpositioned = False
+        elif unpositioned and operator in (b"Tj", b"TJ"):
+            # BT already resets both text matrices to identity. An explicit,
+            # equivalent Tm lets pypdf process the position before the first
+            # glyph run; otherwise it may insert a column/line separator in
+            # the middle of the first kerned word instead.
+            normalized.append(([NumberObject(n) for n in (1, 0, 0, 1, 0, 0)], b"Tm"))
+            changed = True
+            unpositioned = False
+        normalized.append((operands, operator))
+        if operator == b"TJ" and following == b"ET":
             array = operands[0]
             # ET ends the text object, so a final numeric advance has no
             # visible glyph. pypdf otherwise turns it into spaces.
@@ -97,7 +113,7 @@ def _strip_unused_text_advances(stream: ContentStream) -> bool:
                 array.pop()
                 changed = True
     if changed:
-        stream.operations = operations
+        stream.operations = normalized
     return changed
 
 
@@ -219,7 +235,7 @@ def _pdf_page_text(page: PageObject) -> str:
             resources = owner.get("/Resources")
             if resources is not None:
                 owner[NameObject("/Resources")] = _restore_marked_glyphs(stream, resources.get_object())
-            if _strip_unused_text_advances(stream):
+            if _normalize_text_positions(stream):
                 if is_page:
                     owner[NameObject("/Contents")] = stream
                 else:
