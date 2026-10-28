@@ -215,12 +215,36 @@ def _restore_marked_glyphs(  # noqa: C901 - walk the PDF text and marked-content
     return result
 
 
-def _extract_page_text(page: PageObject) -> str:
+def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page extraction state and callbacks together
+    from types import FunctionType, MethodType
+
+    from pypdf import PageObject
+    from pypdf._text_extraction._text_extractor import TextExtraction
     from pypdf.generic import ArrayObject
+    from typing_extensions import override
 
     saved = []
+    advances: list[float] = []
+    active: list[TextExtraction | None] = []
+
+    class PositionedExtraction(TextExtraction):
+        def __init__(self):
+            super().__init__()
+            active[-1] = self
+
+        @override
+        def process_operation(self, operator, operands):
+            # pypdf inserts a plain Python string for a numeric TJ gap. Its
+            # visible separator is useful, but its font width must not count
+            # again: the actual numeric advance is accounted for below.
+            synthetic_space = operator == b"Tj" and operands == [" "] and type(operands[0]) is str
+            super().process_operation(operator, operands)
+            if synthetic_space:
+                self._actual_str_size["str_widths"] -= self.font.space_width * self.font_size
 
     def before(operator, operands, _cm, _tm):
+        if operator == b"TJ" and operands:
+            advances.append(-sum(float(value) for value in operands[0] if isinstance(value, (int, float))))
         if (
             operator == b"TJ"
             and operands
@@ -239,12 +263,46 @@ def _extract_page_text(page: PageObject) -> str:
         if operator == b"TJ" and saved and saved[-1][0] is operands:
             _, original = saved.pop()
             operands[0] = original
+        if operator == b"TJ" and operands:
+            extractor = active[-1]
+            if extractor is None:
+                raise ValueError("missing-pdf-text-extractor")
+            # pypdf counts glyph widths but omits TJ cursor adjustments. A
+            # subsequent Td/Tm can then mistake accumulated letter spacing
+            # for a word boundary in the middle of a word or number.
+            extractor._actual_str_size["str_widths"] += advances.pop() * extractor.font_size
+
+    base = PageObject._extract_text
+    extract = FunctionType(
+        base.__code__,
+        {**base.__globals__, "TextExtraction": PositionedExtraction},
+        base.__name__,
+        base.__defaults__,
+        base.__closure__,
+    )
+    extract.__kwdefaults__ = base.__kwdefaults__
+
+    def invoke(self, *args, **kwargs):
+        active.append(None)
+        try:
+            return extract(self, *args, **kwargs)
+        finally:
+            active.pop()
+
+    # Bind the loop to this reader-owned page. Nested Forms use the same
+    # per-page factory; other pages and pypdf callers keep their own methods.
+    previous = page.__dict__.get("_extract_text")
+    page._extract_text = MethodType(invoke, page)  # ty: ignore[invalid-assignment]
 
     try:
         return page.extract_text(visitor_operand_before=before, visitor_operand_after=after) or ""
     finally:
         for operands, original in reversed(saved):
             operands[0] = original
+        if previous is None:
+            del page._extract_text
+        else:
+            page._extract_text = previous
 
 
 def _pdf_page_text(page: PageObject) -> str:

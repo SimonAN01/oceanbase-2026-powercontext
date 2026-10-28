@@ -187,6 +187,57 @@ def test_new_text_object_separates_columns_before_showing_kerned_words(rotation)
     assert "Column" in pages[0].text
 
 
+@pytest.mark.parametrize("depth", [0, 1, 2])
+@pytest.mark.parametrize("rotation", ["1 0 0 1", "0 1 -1 0"])
+def test_numeric_text_advances_preserve_words_between_relative_positions(depth, rotation):
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
+
+    writer = pypdf.PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+    resources = DictionaryObject({
+        NameObject("/Font"): DictionaryObject({
+            NameObject("/F1"): DictionaryObject({
+                NameObject("/Type"): NameObject("/Font"),
+                NameObject("/Subtype"): NameObject("/Type1"),
+                NameObject("/BaseFont"): NameObject("/Courier"),
+            })
+        })
+    })
+    stream = DecodedStreamObject()
+    stream.set_data(
+        (
+            f"q {rotation} 0 0 cm "
+            # Courier glyphs advance 600 units. Include the TJ adjustments in
+            # the relative position, leaving no word space before 'tive'.
+            "BT /F1 12 Tf 1 0 0 1 36 700 Tm "
+            "[(E) -80 (x) -80 (e) -80 (c) -80 (u) -80] TJ "
+            "40.8 0 Td (tive) Tj 36 0 Td (officer) Tj ET "
+            "BT /F1 12 Tf 1 0 0 1 36 650 Tm "
+            "[(2) -120 (0) -120 (1) -120] TJ 25.92 0 Td (5) Tj ET "
+            "BT /F1 12 Tf 1 0 0 1 36 600 Tm [(Net) -600 (income)] TJ ET Q"
+        ).encode()
+    )
+    for _ in range(depth):
+        stream.update({
+            NameObject("/Type"): NameObject("/XObject"),
+            NameObject("/Subtype"): NameObject("/Form"),
+            NameObject("/BBox"): ArrayObject([NumberObject(n) for n in (0, 0, 612, 792)]),
+            NameObject("/Resources"): resources,
+        })
+        resources = DictionaryObject({NameObject("/XObject"): DictionaryObject({NameObject("/Fm"): stream})})
+        stream = DecodedStreamObject()
+        stream.set_data(b"q /Fm Do Q")
+    page[NameObject("/Resources")] = resources
+    page[NameObject("/Contents")] = stream
+    content = io.BytesIO()
+    writer.write(content)
+    parsed = parse_pdf_document(PDFDocumentInput(document_id="constructed-cursor-width", content=content.getvalue()))
+    assert "Executive officer" in parsed[0].text
+    assert "2015" in parsed[0].text
+    assert "Net income" in parsed[0].text
+
+
 @pytest.mark.parametrize("inside_nested_forms", [False, True])
 def test_unused_trailing_text_advance_does_not_split_words_or_drop_rotated_text(inside_nested_forms):
     pypdf = pytest.importorskip("pypdf")
