@@ -215,6 +215,38 @@ def _restore_marked_glyphs(  # noqa: C901 - walk the PDF text and marked-content
     return result
 
 
+def _extract_page_text(page: PageObject) -> str:
+    from pypdf.generic import ArrayObject
+
+    saved = []
+
+    def before(operator, operands, _cm, _tm):
+        if (
+            operator == b"TJ"
+            and operands
+            and any(isinstance(value, (int, float)) and value > 0 for value in operands[0])
+        ):
+            # Positive TJ adjustments move the next glyph backwards. They
+            # tighten letters, whereas pypdf's absolute-value gap heuristic
+            # treats them as spaces. Mask only that heuristic while extracting;
+            # restore the original operands after each operation.
+            saved.append((operands, operands[0]))
+            operands[0] = ArrayObject(
+                value for value in operands[0] if not isinstance(value, (int, float)) or value <= 0
+            )
+
+    def after(operator, operands, _cm, _tm):
+        if operator == b"TJ" and saved and saved[-1][0] is operands:
+            _, original = saved.pop()
+            operands[0] = original
+
+    try:
+        return page.extract_text(visitor_operand_before=before, visitor_operand_after=after) or ""
+    finally:
+        for operands, original in reversed(saved):
+            operands[0] = original
+
+
 def _pdf_page_text(page: PageObject) -> str:
     from pypdf import PageObject
     from pypdf.generic import ContentStream, DecodedStreamObject, NameObject
@@ -259,7 +291,7 @@ def _pdf_page_text(page: PageObject) -> str:
     normalize(page)
     # These presentation-form ligatures represent ordinary Latin letter
     # sequences. Expanding them preserves words for the specified ASCII tokens.
-    return (page.extract_text() or "").translate({
+    return _extract_page_text(page).translate({
         0xFB00: "ff",
         0xFB01: "fi",
         0xFB02: "fl",

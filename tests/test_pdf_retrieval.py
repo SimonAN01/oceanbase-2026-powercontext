@@ -216,6 +216,7 @@ def test_unused_trailing_text_advance_does_not_split_words_or_drop_rotated_text(
         for index, character in enumerate("Aecember 31, 2022")
     ]
     commands.append("BT /F1 12 Tf 1 0 0 1 36 650 Tm [(Net) -600 (income 300) -1000] TJ ET")
+    commands.append("BT /F1 12 Tf 1 0 0 1 36 620 Tm [(Recei) 350 (vables) -600 (balance)] TJ ET")
     commands.append("BT /F1 12 Tf 0 1 -1 0 400 400 Tm (Revenue 900) Tj ET")
     stream = DecodedStreamObject()
     stream.set_data("\n".join(commands).encode("ascii"))
@@ -241,6 +242,7 @@ def test_unused_trailing_text_advance_does_not_split_words_or_drop_rotated_text(
     assert len(pages) == 1
     assert "December 31, 2022" in pages[0].text
     assert "Net income 300" in pages[0].text
+    assert "Receivables balance" in pages[0].text
     assert "Revenue 900" in pages[0].text
 
 
