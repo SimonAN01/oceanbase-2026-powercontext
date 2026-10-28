@@ -92,6 +92,23 @@ def _normalize_text_positions(stream: ContentStream) -> bool:
     unpositioned = False
     for index, (operands, operator) in enumerate(operations):
         following = operations[index + 1][1] if index + 1 < len(operations) else None
+        if operator == b"Td" and normalized and normalized[-1][1] == b"Tm":
+            matrix = normalized[-1][0]
+            if len(matrix) == 6 and len(operands) == 2:
+                # Neither positioning instruction paints a glyph. Fold their
+                # equivalent final matrix so the transient origin cannot be
+                # mistaken for a line break inside a word spanning BT objects.
+                tx, ty = map(float, operands)
+                normalized[-1] = (
+                    [
+                        *matrix[:4],
+                        FloatObject(float(matrix[4]) + tx * float(matrix[0]) + ty * float(matrix[2])),
+                        FloatObject(float(matrix[5]) + tx * float(matrix[1]) + ty * float(matrix[3])),
+                    ],
+                    b"Tm",
+                )
+                changed = True
+                continue
         if operator == b"BT":
             unpositioned = True
         elif operator in (b"Tm", b"Td", b"TD", b"T*", b"'", b'"', b"ET"):

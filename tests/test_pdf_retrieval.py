@@ -189,7 +189,8 @@ def test_new_text_object_separates_columns_before_showing_kerned_words(rotation)
 
 @pytest.mark.parametrize("depth", [0, 1, 2])
 @pytest.mark.parametrize("rotation", ["1 0 0 1", "0 1 -1 0"])
-def test_numeric_text_advances_preserve_words_between_relative_positions(depth, rotation):
+@pytest.mark.parametrize("matrix_translation", [False, True])
+def test_positioned_chunks_preserve_complete_words(depth, rotation, matrix_translation):
     pypdf = pytest.importorskip("pypdf")
     from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
 
@@ -204,10 +205,17 @@ def test_numeric_text_advances_preserve_words_between_relative_positions(depth, 
             })
         })
     })
-    stream = DecodedStreamObject()
-    stream.set_data(
-        (
-            f"q {rotation} 0 0 cm "
+    if matrix_translation:
+        commands = (
+            "BT /F1 12 Tf 1 0 0 1 40 700 Tm (Execu) Tj ET "
+            "BT /F1 12 Tf 1 0 0 1 0 0 Tm 76 700 Td (tive) Tj ET "
+            "BT /F1 12 Tf 1 0 0 1 0 0 Tm 112 700 Td (officer) Tj ET "
+            "BT /F1 12 Tf 1 0 0 1 40 650 Tm (201) Tj ET "
+            "BT /F1 12 Tf 1 0 0 1 0 0 Tm 61.6 650 Td (5) Tj ET "
+            "BT /F1 12 Tf 1 0 0 1 0 0 Tm 40 600 Td (Net income) Tj ET"
+        )
+    else:
+        commands = (
             # Courier glyphs advance 600 units. Include the TJ adjustments in
             # the relative position, leaving no word space before 'tive'.
             "BT /F1 12 Tf 1 0 0 1 36 700 Tm "
@@ -215,9 +223,10 @@ def test_numeric_text_advances_preserve_words_between_relative_positions(depth, 
             "40.8 0 Td (tive) Tj 36 0 Td (officer) Tj ET "
             "BT /F1 12 Tf 1 0 0 1 36 650 Tm "
             "[(2) -120 (0) -120 (1) -120] TJ 25.92 0 Td (5) Tj ET "
-            "BT /F1 12 Tf 1 0 0 1 36 600 Tm [(Net) -600 (income)] TJ ET Q"
-        ).encode()
-    )
+            "BT /F1 12 Tf 1 0 0 1 36 600 Tm [(Net) -600 (income)] TJ ET"
+        )
+    stream = DecodedStreamObject()
+    stream.set_data((f"q {rotation} 0 0 cm " + commands + " Q").encode())
     for _ in range(depth):
         stream.update({
             NameObject("/Type"): NameObject("/XObject"),
