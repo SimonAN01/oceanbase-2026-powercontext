@@ -33,6 +33,9 @@ from powercontext.sources.models import Source, SourceMaterialization
 from powercontext.sources.projections import TEXT_EVIDENCE_PROJECTION_KEY, TextEvidence
 
 if TYPE_CHECKING:
+    from pypdf import PageObject
+    from pypdf.generic import ContentStream
+
     from powercontext.builtin.artifacts.memory.models import MemoryHit
     from powercontext.builtin.runtime.application import ScopedMemoryApplication
 
@@ -80,6 +83,66 @@ class PDFPageSource(Source, PDFPageInput):
         return self
 
 
+def _strip_unused_text_advances(stream: ContentStream) -> bool:
+    from pypdf.generic import FloatObject, NumberObject
+
+    operations = stream.operations
+    changed = False
+    for index, (operands, operator) in enumerate(operations[:-1]):
+        if operator == b"TJ" and operations[index + 1][1] == b"ET":
+            array = operands[0]
+            # ET ends the text object, so a final numeric advance has no
+            # visible glyph. pypdf otherwise turns it into spaces.
+            while array and isinstance(array[-1], (NumberObject, FloatObject)):
+                array.pop()
+                changed = True
+    if changed:
+        stream.operations = operations
+    return changed
+
+
+def _pdf_page_text(page: PageObject) -> str:
+    from pypdf import PageObject
+    from pypdf.generic import ContentStream, DecodedStreamObject, DictionaryObject, NameObject
+
+    normalized: dict[int, DictionaryObject] = {}
+
+    def normalize(owner: DictionaryObject) -> DictionaryObject:
+        identity = id(owner)
+        if identity in normalized:
+            return normalized[identity]
+        normalized[identity] = owner
+        is_page = isinstance(owner, PageObject)
+        contents = owner.get("/Contents") if is_page else owner
+        if contents is not None:
+            # Keep encoded glyph bytes: decoded PDF strings would bypass the
+            # font's character map when pypdf reads this ContentStream again.
+            stream = ContentStream(contents, page.pdf, "bytes")
+            if _strip_unused_text_advances(stream):
+                if is_page:
+                    owner[NameObject("/Contents")] = stream
+                else:
+                    replacement = DecodedStreamObject()
+                    replacement.update({
+                        key: value for key, value in owner.items() if key not in ("/Length", "/Filter", "/DecodeParms")
+                    })
+                    replacement.set_data(stream.get_data())
+                    owner = replacement
+                    normalized[identity] = owner
+        resources = owner.get("/Resources")
+        xobjects = resources.get_object().get("/XObject") if resources is not None else None
+        if xobjects is not None:
+            entries = xobjects.get_object()
+            for name, reference in entries.items():
+                form = reference.get_object()
+                if form.get("/Subtype") == "/Form":
+                    entries[name] = normalize(form)
+        return owner
+
+    normalize(page)
+    return page.extract_text() or ""
+
+
 def parse_pdf_document(value: PDFDocumentInput) -> tuple[PDFPageInput, ...]:
     """Parse every page before publishing any results, including empty pages."""
     # pypdf is an optional source dependency; other Source types do not require it.
@@ -99,22 +162,7 @@ def parse_pdf_document(value: PDFDocumentInput) -> tuple[PDFPageInput, ...]:
                 document_id=value.document_id,
                 document_sha256=digest,
                 page_number=index,
-                # Coordinate-based extraction avoids artificial word spaces
-                # after unused TJ advances at the end of a text object.
-                text=(
-                    re.sub(
-                        r"[ \t]+",
-                        " ",
-                        page.extract_text(
-                            extraction_mode="layout",
-                            layout_mode_space_vertically=False,
-                            layout_mode_strip_rotated=False,
-                        )
-                        or "",
-                    ).strip()
-                    if page.get_contents() is not None
-                    else ""
-                ),
+                text=_pdf_page_text(page),
             )
             for index, page in enumerate(reader.pages, start=1)
         )

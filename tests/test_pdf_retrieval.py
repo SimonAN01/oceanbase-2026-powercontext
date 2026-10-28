@@ -72,9 +72,10 @@ async def _store_pages(runtime, scope_id, texts):
         pytest.fail("source flush did not drain")
 
 
-def test_unused_trailing_text_advance_does_not_split_words_or_drop_rotated_text():
+@pytest.mark.parametrize("inside_nested_forms", [False, True])
+def test_unused_trailing_text_advance_does_not_split_words_or_drop_rotated_text(inside_nested_forms):
     pypdf = pytest.importorskip("pypdf")
-    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+    from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
 
     writer = pypdf.PdfWriter()
     page = writer.add_blank_page(width=612, height=792)
@@ -84,6 +85,10 @@ def test_unused_trailing_text_advance_does_not_split_words_or_drop_rotated_text(
                 NameObject("/Type"): NameObject("/Font"),
                 NameObject("/Subtype"): NameObject("/Type1"),
                 NameObject("/BaseFont"): NameObject("/Courier"),
+                NameObject("/Encoding"): DictionaryObject({
+                    NameObject("/BaseEncoding"): NameObject("/WinAnsiEncoding"),
+                    NameObject("/Differences"): ArrayObject([NumberObject(65), NameObject("/D")]),
+                }),
             })
         })
     })
@@ -91,17 +96,36 @@ def test_unused_trailing_text_advance_does_not_split_words_or_drop_rotated_text(
     # places the next letter directly beside it, with no visual word space.
     commands = [
         f"BT /F1 12 Tf 1 0 0 1 {36 + index * 7.2:.2f} 700 Tm [({character}) -1000] TJ ET"
-        for index, character in enumerate("December 31, 2022")
+        # Character code A maps to glyph D; normalization must retain the
+        # encoded bytes so that the font still yields the word December.
+        for index, character in enumerate("Aecember 31, 2022")
     ]
+    commands.append("BT /F1 12 Tf 1 0 0 1 36 650 Tm [(Net) -600 (income 300) -1000] TJ ET")
     commands.append("BT /F1 12 Tf 0 1 -1 0 400 400 Tm (Revenue 900) Tj ET")
     stream = DecodedStreamObject()
     stream.set_data("\n".join(commands).encode("ascii"))
+    if inside_nested_forms:
+        # Forms may contain other Forms; both upright and rotated text still
+        # belong to this physical page, including unused text advances.
+        for _ in range(2):
+            stream.update({
+                NameObject("/Type"): NameObject("/XObject"),
+                NameObject("/Subtype"): NameObject("/Form"),
+                NameObject("/BBox"): ArrayObject([NumberObject(value) for value in (0, 0, 612, 792)]),
+                NameObject("/Resources"): page["/Resources"],
+            })
+            page[NameObject("/Resources")] = DictionaryObject({
+                NameObject("/XObject"): DictionaryObject({NameObject("/Fm"): stream})
+            })
+            stream = DecodedStreamObject()
+            stream.set_data(b"q /Fm Do Q")
     page[NameObject("/Contents")] = stream
     output = io.BytesIO()
     writer.write(output)
     pages = parse_pdf_document(PDFDocumentInput(document_id="constructed-advances", content=output.getvalue()))
     assert len(pages) == 1
     assert "December 31, 2022" in pages[0].text
+    assert "Net income 300" in pages[0].text
     assert "Revenue 900" in pages[0].text
 
 
