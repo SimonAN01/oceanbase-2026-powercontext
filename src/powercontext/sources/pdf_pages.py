@@ -34,7 +34,7 @@ from powercontext.sources.projections import TEXT_EVIDENCE_PROJECTION_KEY, TextE
 
 if TYPE_CHECKING:
     from pypdf import PageObject
-    from pypdf.generic import ContentStream
+    from pypdf.generic import ContentStream, DictionaryObject
 
     from powercontext.builtin.artifacts.memory.models import MemoryHit
     from powercontext.builtin.runtime.application import ScopedMemoryApplication
@@ -101,9 +101,107 @@ def _strip_unused_text_advances(stream: ContentStream) -> bool:
     return changed
 
 
+def _restore_marked_glyphs(  # noqa: C901 - walk the PDF text and marked-content state together
+    stream: ContentStream, resources: DictionaryObject
+) -> DictionaryObject:
+    """Recover null Unicode glyph mappings from explicit single-glyph ActualText.
+
+    A marked replacement can cover an entire phrase. Only an unambiguous,
+    single encoded glyph with a null mapping can repair a font-wide mapping;
+    other marked spans do not justify changing unrelated text.
+    """
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject, create_string_object
+
+    fonts_ref = resources.get("/Font")
+    if fonts_ref is None:
+        return resources
+    fonts = fonts_ref.get_object()
+    font_name: str | None = None
+    saved_fonts: list[str | None] = []
+    spans: list[tuple[str | None, list[tuple[str | None, bytes]]]] = []
+    candidates: dict[tuple[str, bytes], str | None] = {}
+    for operands, operator in stream.operations:
+        if operator == b"Tf":
+            font_name = str(operands[0])
+        elif operator == b"q":
+            saved_fonts.append(font_name)
+        elif operator == b"Q":
+            font_name = saved_fonts.pop() if saved_fonts else None
+        elif operator in (b"BDC", b"BMC"):
+            actual: str | None = None
+            if operator == b"BDC":
+                properties = operands[1]
+                if isinstance(properties, NameObject):
+                    properties = resources.get("/Properties", {}).get(properties, {})
+                if hasattr(properties, "get_object"):
+                    properties = properties.get_object()
+                if isinstance(properties, dict):
+                    value = properties.get("/ActualText")
+                    if isinstance(value, bytes):
+                        value = create_string_object(value)
+                    if isinstance(value, str):
+                        actual = value
+            spans.append((actual, []))
+        elif operator in (b"Tj", b"TJ", b"'", b'"') and spans:
+            values = operands[0] if operator == b"TJ" else (operands[-1],)
+            for value in values:
+                if isinstance(value, bytes) and value:
+                    for _, glyphs in spans:
+                        glyphs.append((font_name, value))
+        elif operator == b"EMC" and spans:
+            actual, glyphs = spans.pop()
+            if actual and glyphs:
+                name = glyphs[0][0]
+                if name is None or name not in fonts or any(font != name for font, _ in glyphs):
+                    continue
+                font = fonts[name].get_object()
+                width = 2 if font.get("/Encoding") in ("/Identity-H", "/Identity-V") else 1
+                encoded = b"".join(value for _, value in glyphs)
+                if len(encoded) != width:
+                    continue
+                key = (name, encoded)
+                candidates[key] = actual if key not in candidates or candidates[key] == actual else None
+
+    replacements = DictionaryObject(fonts)
+    changed = False
+    for (name, encoded), actual in candidates.items():
+        font = replacements[name].get_object()
+        if not isinstance(font, DictionaryObject):
+            continue
+        cmap_ref = font.get("/ToUnicode")
+        if actual is None or cmap_ref is None:
+            continue
+        cmap = cmap_ref.get_object().get_data()
+        # Repair only explicitly null bfchar mappings. ActualText does not
+        # override a valid character map or an unrelated occurrence of a glyph.
+        pattern = rb"<" + encoded.hex().encode() + rb">\s*<0+>"
+        bfchars = re.findall(rb"beginbfchar(.*?)endbfchar", cmap, flags=re.DOTALL)
+        if not any(re.search(pattern, block, flags=re.IGNORECASE) for block in bfchars) or b"endcmap" not in cmap:
+            continue
+        replacement = (
+            b"1 beginbfchar\n<"
+            + encoded.hex().encode()
+            + b"> <"
+            + actual.encode("utf-16-be").hex().encode()
+            + b">\nendbfchar\n"
+        )
+        head, tail = cmap.rsplit(b"endcmap", 1)
+        mapping = DecodedStreamObject()
+        mapping.set_data(head + replacement + b"endcmap" + tail)
+        repaired = DictionaryObject(font)
+        repaired[NameObject("/ToUnicode")] = mapping
+        replacements[NameObject(name)] = repaired
+        changed = True
+    if not changed:
+        return resources
+    result = DictionaryObject(resources)
+    result[NameObject("/Font")] = replacements
+    return result
+
+
 def _pdf_page_text(page: PageObject) -> str:
     from pypdf import PageObject
-    from pypdf.generic import ContentStream, DecodedStreamObject, DictionaryObject, NameObject
+    from pypdf.generic import ContentStream, DecodedStreamObject, NameObject
 
     normalized: dict[int, DictionaryObject] = {}
 
@@ -118,6 +216,9 @@ def _pdf_page_text(page: PageObject) -> str:
             # Keep encoded glyph bytes: decoded PDF strings would bypass the
             # font's character map when pypdf reads this ContentStream again.
             stream = ContentStream(contents, page.pdf, "bytes")
+            resources = owner.get("/Resources")
+            if resources is not None:
+                owner[NameObject("/Resources")] = _restore_marked_glyphs(stream, resources.get_object())
             if _strip_unused_text_advances(stream):
                 if is_page:
                     owner[NameObject("/Contents")] = stream
@@ -140,7 +241,17 @@ def _pdf_page_text(page: PageObject) -> str:
         return owner
 
     normalize(page)
-    return page.extract_text() or ""
+    # These presentation-form ligatures represent ordinary Latin letter
+    # sequences. Expanding them preserves words for the specified ASCII tokens.
+    return (page.extract_text() or "").translate({
+        0xFB00: "ff",
+        0xFB01: "fi",
+        0xFB02: "fl",
+        0xFB03: "ffi",
+        0xFB04: "ffl",
+        0xFB05: "st",
+        0xFB06: "st",
+    })
 
 
 def parse_pdf_document(value: PDFDocumentInput) -> tuple[PDFPageInput, ...]:

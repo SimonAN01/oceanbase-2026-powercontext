@@ -74,6 +74,87 @@ async def _store_pages(runtime, scope_id, texts):
         pytest.fail("source flush did not drain")
 
 
+def _tagged_glyph_pdf(*, mapping="0000", nested=False, conflicting=False):
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
+
+    writer = pypdf.PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+    cmap = DecodedStreamObject()
+    cmap.set_data(
+        (
+            "/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n"
+            "1 begincodespacerange <0000> <FFFF> endcodespacerange\n"
+            "6 beginbfchar <0001> <0053> <0002> <0065> <0003> <0063> "
+            f"<0004> <{mapping}> <0005> <006F> <0006> <006E> endbfchar\nendcmap end end"
+        ).encode()
+    )
+    font = DictionaryObject({
+        NameObject("/Type"): NameObject("/Font"),
+        NameObject("/Subtype"): NameObject("/Type0"),
+        NameObject("/BaseFont"): NameObject("/Synthetic"),
+        NameObject("/Encoding"): NameObject("/Identity-H"),
+        NameObject("/ToUnicode"): cmap,
+        NameObject("/DescendantFonts"): ArrayObject([
+            DictionaryObject({
+                NameObject("/Type"): NameObject("/Font"),
+                NameObject("/Subtype"): NameObject("/CIDFontType2"),
+                NameObject("/BaseFont"): NameObject("/Synthetic"),
+                NameObject("/DW"): NumberObject(500),
+            })
+        ]),
+    })
+    resources = DictionaryObject({NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})})
+    commands = (
+        b"BT /F1 12 Tf 1 0 0 1 36 700 Tm <000100020003> Tj "
+        b"/Span << /ActualText <FEFF00740069> >> BDC <0004> Tj EMC <00050006> Tj "
+    )
+    if conflicting:
+        commands += b"/Span << /ActualText <FEFF00660074> >> BDC <0004> Tj EMC "
+    commands += b"ET"
+    stream = DecodedStreamObject()
+    stream.set_data(commands)
+    if nested:
+        stream.update({
+            NameObject("/Type"): NameObject("/XObject"),
+            NameObject("/Subtype"): NameObject("/Form"),
+            NameObject("/BBox"): ArrayObject([NumberObject(v) for v in (0, 0, 612, 792)]),
+            NameObject("/Resources"): resources,
+        })
+        resources = DictionaryObject({NameObject("/XObject"): DictionaryObject({NameObject("/Fm"): stream})})
+        stream = DecodedStreamObject()
+        stream.set_data(b"q /Fm Do Q")
+    page[NameObject("/Resources")] = resources
+    page[NameObject("/Contents")] = stream
+    output = io.BytesIO()
+    writer.write(output)
+    return output.getvalue()
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_actual_text_recovers_null_mapped_ligature(nested):
+    content = _tagged_glyph_pdf(nested=nested)
+    pages = parse_pdf_document(PDFDocumentInput(document_id="constructed-actual-text", content=content))
+    assert "Section" in pages[0].text
+    assert "\0" not in pages[0].text
+
+
+def test_actual_text_does_not_overwrite_valid_or_ambiguous_font_mapping():
+    valid = parse_pdf_document(PDFDocumentInput(document_id="valid-map", content=_tagged_glyph_pdf(mapping="0051")))
+    assert "SecQon" in valid[0].text
+    ambiguous = parse_pdf_document(
+        PDFDocumentInput(document_id="ambiguous-map", content=_tagged_glyph_pdf(conflicting=True))
+    )
+    assert ambiguous[0].text.count("\0") == 2
+
+
+def test_latin_presentation_ligature_expands_without_altering_other_unicode():
+    pages = parse_pdf_document(
+        PDFDocumentInput(document_id="presentation-ligature", content=_tagged_glyph_pdf(mapping="FB01"))
+    )
+    assert "Secfion" in pages[0].text
+
+
 @pytest.mark.parametrize("inside_nested_forms", [False, True])
 def test_unused_trailing_text_advance_does_not_split_words_or_drop_rotated_text(inside_nested_forms):
     pypdf = pytest.importorskip("pypdf")
