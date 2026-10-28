@@ -158,6 +158,28 @@ def test_long_captured_page_remains_complete_after_persistence_and_restart(tmp_p
     asyncio.run(scenario())
 
 
+def test_many_financial_notes_cannot_hide_the_named_documents_primary_statement():
+    async def scenario():
+        statement = "ACME_2026\nConsolidated Balance Sheets\nAssets 100. Liabilities 40."
+        notes = tuple(
+            f"ACME_2026\nNote {number}\n"
+            + "ACME FY2026 current ratio balance sheet assets liabilities financial discussion. " * 12
+            for number in range(220)
+        )
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Long filing", summary="Candidate coverage", idempotency_key="long-filing")
+            )
+            memory = runtime.memory.for_scope(scope.scope_id)
+            await _store_pages(runtime, scope.scope_id, (*notes, statement))
+            citations = await search_pdf_pages(memory, "What is ACME's FY2026 current ratio?", limit=1)
+            assert len(citations) == 1
+            assert (await memory.get(GetMemoryEntryRequest(citation=citations[0]))).entry.text == statement
+
+    asyncio.run(scenario())
+
+
 def test_answer_style_instructions_do_not_hide_separate_financial_statements():
     async def scenario():
         statements = (

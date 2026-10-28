@@ -298,6 +298,25 @@ def _statement_page(text: str, focus: tuple[str, ...]) -> bool:
     return False
 
 
+def _named_documents(hits: tuple[MemoryHit, ...], question: str) -> frozenset[str]:
+    query_words = re.findall(r"[a-z0-9]+", question.casefold())
+    query_identity = {
+        "".join(query_words[start : start + width])
+        for start in range(len(query_words))
+        for width in range(1, min(4, len(query_words) - start) + 1)
+    }
+    filing_words = {"10k", "10q", "8k", "annual", "annualreport", "report", "earnings", "dated"}
+    return frozenset(
+        identity
+        for hit in hits
+        if (identity := hit.text.partition("\n")[0])
+        and any(
+            len(word) > 1 and re.search(r"[a-z]", word) and word not in filing_words and word in query_identity
+            for word in re.findall(r"[a-z0-9]+", identity.casefold())
+        )
+    )
+
+
 def _rank_pages(hits: tuple[MemoryHit, ...], query: str, expansion: str, question: str) -> tuple[MemoryHit, ...]:
     """BM25 over actual retrieved page text, with lower-weight concept expansion."""
     documents = [_terms(hit.text) for hit in hits]
@@ -307,20 +326,7 @@ def _rank_pages(hits: tuple[MemoryHit, ...], query: str, expansion: str, questio
     weights = dict.fromkeys(_terms(expansion), 0.35)
     weights.update(dict.fromkeys(_terms(query), 1.0))
     focus = _statement_focus(question)
-    query_words = re.findall(r"[a-z0-9]+", question.casefold())
-    query_identity = {
-        "".join(query_words[start : start + width])
-        for start in range(len(query_words))
-        for width in range(1, min(4, len(query_words) - start) + 1)
-    }
-    filing_words = {"10k", "10q", "8k", "annual", "annualreport", "report", "earnings", "dated"}
-    named_documents = tuple(
-        any(
-            len(word) > 1 and re.search(r"[a-z]", word) and word not in filing_words and word in query_identity
-            for word in re.findall(r"[a-z0-9]+", hit.text.partition("\n")[0].casefold())
-        )
-        for hit in hits
-    )
+    named_documents = _named_documents(hits, question)
 
     def score(index: int) -> float:
         document = documents[index]
@@ -340,7 +346,7 @@ def _rank_pages(hits: tuple[MemoryHit, ...], query: str, expansion: str, questio
         for index in sorted(
             range(len(hits)),
             key=lambda index: (
-                -int(named_documents[index]),
+                -int(hits[index].text.partition("\n")[0] in named_documents),
                 -int(_statement_page(hits[index].text, focus)),
                 -score(index),
                 index,
@@ -379,15 +385,11 @@ def _queries(question: str) -> tuple[str, str, tuple[str, ...]]:
     return primary, " ".join((*concepts, *phrases, *statement_terms)), queries
 
 
-async def search_pdf_pages(
-    memory: ScopedMemoryApplication, question: str, limit: int = 10
-) -> tuple[MemoryCitation, ...]:
-    """Retrieve real immutable entry citations; no document paths or labels are read."""
-    from powercontext.builtin.runtime.models import GetMemoryEntryRequest, SearchMemoryRequest
+async def _search_candidates(
+    memory: ScopedMemoryApplication, queries: tuple[str, ...], question: str, limit: int
+) -> tuple[MemoryHit, ...]:
+    from powercontext.builtin.runtime.models import SearchMemoryRequest
 
-    if type(limit) is not int or limit < 1 or not question.strip():
-        raise ValueError("invalid-pdf-search")
-    query, expansion, queries = _queries(question)
     candidates: dict[tuple[str, str, int, str, str], MemoryHit] = {}
     for text in queries:
         page = await memory.search(SearchMemoryRequest(query=text, limit=max(200, limit * 10), mode="fts"))
@@ -400,9 +402,44 @@ async def search_pdf_pages(
                 hit.entry_version_id,
             )
             candidates.setdefault(key, hit)
+    # Short topic queries have a global top-N cutoff. In a long filing,
+    # numerous matching notes can crowd a primary statement out of every
+    # topic pool. Retrieve the named filing through the same public API before
+    # reranking, expanding the request until Memory has no further hits.
+    for document in sorted(_named_documents(tuple(candidates.values()), question)):
+        pool_limit = max(1000, limit * 10)
+        while True:
+            page = await memory.search(
+                SearchMemoryRequest(query=analyze_fts_query(document), limit=pool_limit, mode="fts")
+            )
+            for hit in page.hits:
+                key = (
+                    hit.memory_ref.family,
+                    hit.memory_ref.artifact_id,
+                    hit.memory_ref.revision,
+                    hit.entry_id,
+                    hit.entry_version_id,
+                )
+                candidates.setdefault(key, hit)
+            if len(page.hits) < pool_limit:
+                break
+            pool_limit *= 2
+    return tuple(candidates.values())
+
+
+async def search_pdf_pages(
+    memory: ScopedMemoryApplication, question: str, limit: int = 10
+) -> tuple[MemoryCitation, ...]:
+    """Retrieve real immutable entry citations; no document paths or labels are read."""
+    from powercontext.builtin.runtime.models import GetMemoryEntryRequest
+
+    if type(limit) is not int or limit < 1 or not question.strip():
+        raise ValueError("invalid-pdf-search")
+    query, expansion, queries = _queries(question)
+    candidates = await _search_candidates(memory, queries, question, limit)
     citations: list[MemoryCitation] = []
     seen_pages: set[str] = set()
-    for hit in _rank_pages(tuple(candidates.values()), query, expansion, question):
+    for hit in _rank_pages(candidates, query, expansion, question):
         citation = MemoryCitation(
             memory_ref=hit.memory_ref, entry_id=hit.entry_id, entry_version_id=hit.entry_version_id
         )
