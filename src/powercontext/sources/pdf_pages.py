@@ -438,6 +438,15 @@ def _statement_page(text: str, focus: tuple[str, ...]) -> bool:
     # Formal statement titles must remain recognizable anywhere on the page.
     headings = [line for line in text.splitlines()[1:] if line.strip()]
     for position in range(len(headings)):
+        # Wrapped prose can put an exact statement name on its own line.
+        # A preceding connective or title qualifier belongs to that sentence,
+        # rather than a separate formal heading.
+        if position and re.search(
+            r"\b(?:the|a|an|of|in|on|to|for|and|or|our|its|their|consolidated|combined|condensed)\s*$",
+            headings[position - 1],
+            re.IGNORECASE,
+        ):
+            continue
         for width in (1, 2):
             heading = " ".join(" ".join(headings[position : position + width]).casefold().split())
             if len(heading.split()) > 12 or re.search(r"\.(?:\s*\.)+", heading):
@@ -598,6 +607,13 @@ async def search_pdf_pages(
     candidates = await _search_candidates(memory, queries, question, limit)
     citations: list[MemoryCitation] = []
     seen_pages: set[str] = set()
+    deferred: list[MemoryCitation] = []
+    statement_counts: Counter[tuple[str, str]] = Counter()
+    focus = _statement_focus(question)
+    # Main statements supply numeric inputs, but a long filing can also
+    # contain many subsidiary statements. Leave room for narrative evidence;
+    # unused slots are backfilled from the deferred statements below.
+    statement_slots = max(1, limit // 5)
     for hit in _rank_pages(candidates, query, expansion, question):
         citation = MemoryCitation(
             memory_ref=hit.memory_ref, entry_id=hit.entry_id, entry_version_id=hit.entry_version_id
@@ -611,7 +627,15 @@ async def search_pdf_pages(
         if page_id in seen_pages:
             continue
         seen_pages.add(page_id)
+        document = hit.text.partition("\n")[0]
+        kinds = tuple(kind for kind in focus if _statement_page(hit.text, (kind,)))
+        if kinds and all(statement_counts[document, kind] >= statement_slots for kind in kinds):
+            deferred.append(citation)
+            continue
+        for kind in kinds:
+            statement_counts[document, kind] += 1
         citations.append(citation)
         if len(citations) == limit:
             break
+    citations.extend(deferred[: limit - len(citations)])
     return tuple(citations)

@@ -295,6 +295,53 @@ def test_many_financial_notes_cannot_hide_the_named_documents_primary_statement(
     asyncio.run(scenario())
 
 
+def test_many_primary_statements_cannot_hide_a_querys_narrative_evidence():
+    async def scenario():
+        target = "ACME_2026\nRevenue by sales channel\nDigital channels contributed 35 percent of revenue."
+        statements = tuple(
+            f"ACME_2026\nConsolidated Statements of Income\nSubsidiary {number}. Revenue 100. Net income 20."
+            for number in range(32)
+        )
+        notes = tuple(f"ACME_2026\nAccounting policies {number}. Revenue recognition." for number in range(20))
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(
+                    title="Statement diversity", summary="Narrative metric evidence", idempotency_key="diversity"
+                )
+            )
+            memory = runtime.memory.for_scope(scope.scope_id)
+            await _store_pages(runtime, scope.scope_id, (*statements, target, *notes))
+            citations = await search_pdf_pages(
+                memory, "What percentage of ACME's FY2026 revenue came from digital channels?", limit=20
+            )
+            entries = [(await memory.get(GetMemoryEntryRequest(citation=value))).entry for value in citations]
+            assert target in {entry.text for entry in entries}
+            assert len(entries) == len({entry.sources[0].source_id for entry in entries}) == 20
+
+    asyncio.run(scenario())
+
+
+def test_statement_diversity_backfills_when_only_statement_pages_are_available():
+    async def scenario():
+        statements = tuple(
+            f"ACME_2026\nConsolidated Statements of Income\nRevenue category {number}. Net income {number}."
+            for number in range(8)
+        )
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Statement backfill", summary="Preserve result count", idempotency_key="backfill")
+            )
+            memory = runtime.memory.for_scope(scope.scope_id)
+            await _store_pages(runtime, scope.scope_id, statements)
+            citations = await search_pdf_pages(memory, "ACME FY2026 income statement", limit=6)
+            entries = [(await memory.get(GetMemoryEntryRequest(citation=value))).entry for value in citations]
+            assert len(entries) == len({entry.sources[0].source_id for entry in entries}) == 6
+
+    asyncio.run(scenario())
+
+
 def test_answer_style_instructions_do_not_hide_separate_financial_statements():
     async def scenario():
         statements = (
@@ -435,6 +482,37 @@ def test_statement_title_drawn_after_table_is_still_recognized():
                 limit=1,
             )
             assert len(citations) == 1
+            assert (await memory.get(GetMemoryEntryRequest(citation=citations[0]))).entry.text == statement
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    (
+        "Depreciation expense is included in other income in the",
+        "Expense is included in the Consolidated",
+        "The following table presents the related depreciation expense on the",
+    ),
+)
+def test_wrapped_statement_mentions_in_prose_are_not_primary_titles(prefix):
+    async def scenario():
+        statement = "ACME_2026\nACME Inc.\nConsolidated Statements of Income\nNet income 100."
+        notes = tuple(
+            f"ACME_2026\nNote {number}\n{prefix}\nConsolidated statements of income.\n"
+            "Depreciation and amortization expense."
+            for number in range(8)
+        )
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Wrapped prose", summary="Full formal titles", idempotency_key="wrapped-prose")
+            )
+            memory = runtime.memory.for_scope(scope.scope_id)
+            await _store_pages(runtime, scope.scope_id, (statement, *notes))
+            citations = await search_pdf_pages(
+                memory, "Which ACME FY2026 income statement contains depreciation and amortization?", limit=1
+            )
             assert (await memory.get(GetMemoryEntryRequest(citation=citations[0]))).entry.text == statement
 
     asyncio.run(scenario())
