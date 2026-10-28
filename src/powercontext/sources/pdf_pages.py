@@ -99,7 +99,22 @@ def parse_pdf_document(value: PDFDocumentInput) -> tuple[PDFPageInput, ...]:
                 document_id=value.document_id,
                 document_sha256=digest,
                 page_number=index,
-                text=page.extract_text() or "",
+                # Coordinate-based extraction avoids artificial word spaces
+                # after unused TJ advances at the end of a text object.
+                text=(
+                    re.sub(
+                        r"[ \t]+",
+                        " ",
+                        page.extract_text(
+                            extraction_mode="layout",
+                            layout_mode_space_vertically=False,
+                            layout_mode_strip_rotated=False,
+                        )
+                        or "",
+                    ).strip()
+                    if page.get_contents() is not None
+                    else ""
+                ),
             )
             for index, page in enumerate(reader.pages, start=1)
         )

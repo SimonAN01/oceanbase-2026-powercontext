@@ -1,6 +1,6 @@
 # PowerContext 2026 参赛实现与验证
 
-日期：2026-10-27。实现基于冻结版本 `9db1753434162c0aa7c9f1189a1722e617880a52`，保留原始提交历史。CSV 基线位于 `competition/csv-evidence`；集成实现及 PDF 检索改进位于 `competition/pdf-layout-order-20261027`。
+日期：2026-10-28。实现基于冻结版本 `9db1753434162c0aa7c9f1189a1722e617880a52`，保留原始提交历史。CSV 基线位于 `competition/csv-evidence`；集成实现及 PDF 解析、检索改进位于 `competition/pdf-text-fidelity-20261028`。
 
 ## 功能
 
@@ -9,7 +9,7 @@
 | 仓库准备，10 分 | 保留冻结基线历史，仓库可匿名读取 | `check-baseline`；匿名 GitHub 仓库及指定 commit 查询 |
 | CSV 行证据，20 分 | `sources/csv_rows.py`：完整校验、稳定行身份、原始字段及文本投影 | 17 项通过 |
 | Pi 会话，20 分 | `sources/pi_session.py`：完整事件树校验、可见内容、分支切换、持久化 checkpoint 及历史改写检测 | 15 项通过 |
-| PDF 页检索，50 分 | `sources/pdf_pages.py`：全部物理页、空白页、空密码权限、全文摘要、页级 Source；公开 Memory 搜索、数值问题的报表候选补全、分部与地理词项、短查询、跨行标题、离线重排及按实际 Source 去重 | 6 项通过；完整解析并持久化 503 页公开财报 |
+| PDF 页检索，50 分 | `sources/pdf_pages.py`：按坐标恢复文字、保留旋转文字、全部物理页、空白页、空密码权限、全文摘要、页级 Source；公开 Memory 搜索、数值问题的报表候选补全、分部与地理词项、短查询、跨行标题、离线重排及按实际 Source 去重 | 6 项通过；完整解析并持久化 503 页公开财报 |
 | HTTP 重排，20 分 | `builtin/artifacts/memory/http_reranker.py`：原始全局序号、有限批次、响应严格校验、稳定排序和真实 usage | 10 项通过 |
 | 增量上下文，20 分 | `builtin/runtime/context_pack.py` 及 `prepare_incremental`：UTF-8 分块、规范 JSON/Base64、摘要、协议字节数和独立重建 | 14 项通过 |
 | 计数触发，20 分 | Runtime 配置及原生 supervisor：按 scope/family 成功 cursor 后的 journal 身份计数，与时间条件取 OR；保留原有窗口、wave 和重试 | 17 项通过 |
@@ -23,6 +23,10 @@
 另增加了项目回归，检查生命周期传播中途发生真实 Memory 写入异常后的重启恢复、完成事件重放不产生新 Memory revision、Unicode/JSON 引用预算、不同 scope 的相同身份，以及长回答格式指令不遮蔽财务报表检索。PDF 的 12 项回归通过真实 Source observation、入库和 Memory 回查，覆盖同页多个条目、非 PDF 条目排除、显式报表优先、跨行标题、P&L / statements of operations 等报表别名、ROA/ROE 公式输入、未指明报表名称的 FCF 问题、地理问题召回报告分部页、标题在 PDF 绘制顺序中位于表格之后，以及附注标题包含报表名称但不是主报表的情形。HTTP 的 `evidence_selection` 字段从 OpenAPI 生成，默认关闭。
 
 另将固定版本的 3M 2022 与 JPMorgan 2022 原始财报混合入库，共 634 页。根据原 PDF 报表标题自行构造的 8 个查询均召回所需报表，并逐条回查真实引用。该检查不加载 FinanceBench 答案或证据标注，不能替代平台的完整质量验收。JPMorgan 的主报表标题在默认文本提取中位于页末，因此标题识别覆盖全页的完整正式短标题，不依赖提取文本前若干行；排序同时利用投影中实际文档身份与问题中的名称对应关系，减少混合文档相互挤占候选名额。
+
+全文解析还覆盖一种独立的绘制方式：每个字符的 `TJ` 末尾带有不再使用的位移，随后结束文本对象并用绝对坐标放置下一个字符。默认提取会将这些位移误作字符之间的空格。自造 PDF 在原实现中产生 `D e c e m b e r  3 1`，新增回归要求读回完整单词和数字，并同时保留旋转文字。解析使用固定 pypdf 的布局模式、保留全部方向的文字，仅压缩水平排版空白；没有内容流的物理页保留为空。
+
+另以独立的 PyMuPDF 提取结果核对 PepsiCo、3M 和 JPMorgan 三份原财报的全部 1,137 页，不使用答案或标注。默认模式在 JPMorgan 的 92 页出现词项 F1 低于 0.95、65 页词项数量相差超过 10%；布局模式在三份文档上的每页 F1 均不低于 0.95、词项数量均在独立提取值的 90%–110% 内。此结果是提取器之间的核对，不是与平台标注的比对，不代表正式质量验收通过。
 
 ## 40 轮传输成本测量
 

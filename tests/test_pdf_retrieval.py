@@ -15,6 +15,7 @@
 """Natural financial questions retrieve their separate literal table inputs."""
 
 import asyncio
+import io
 
 import pytest
 
@@ -28,7 +29,13 @@ from powercontext.builtin.runtime import (
 )
 from powercontext.builtin.scope import ScopeDraft
 from powercontext.sources import SourceDefinitionRegistry, manifest_for_definition, project_source_for_transport
-from powercontext.sources.pdf_pages import PDF_PAGE_SOURCE_DEFINITION, PDFPageInput, search_pdf_pages
+from powercontext.sources.pdf_pages import (
+    PDF_PAGE_SOURCE_DEFINITION,
+    PDFDocumentInput,
+    PDFPageInput,
+    parse_pdf_document,
+    search_pdf_pages,
+)
 from powercontext.sources.projections import TEXT_EVIDENCE_PROJECTION_KEY
 
 
@@ -63,6 +70,39 @@ async def _store_pages(runtime, scope_id, texts):
             break
     else:
         pytest.fail("source flush did not drain")
+
+
+def test_unused_trailing_text_advance_does_not_split_words_or_drop_rotated_text():
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    writer = pypdf.PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+    page[NameObject("/Resources")] = DictionaryObject({
+        NameObject("/Font"): DictionaryObject({
+            NameObject("/F1"): DictionaryObject({
+                NameObject("/Type"): NameObject("/Font"),
+                NameObject("/Subtype"): NameObject("/Type1"),
+                NameObject("/BaseFont"): NameObject("/Courier"),
+            })
+        })
+    })
+    # Each text object ends after its final advance. The next absolute position
+    # places the next letter directly beside it, with no visual word space.
+    commands = [
+        f"BT /F1 12 Tf 1 0 0 1 {36 + index * 7.2:.2f} 700 Tm [({character}) -1000] TJ ET"
+        for index, character in enumerate("December 31, 2022")
+    ]
+    commands.append("BT /F1 12 Tf 0 1 -1 0 400 400 Tm (Revenue 900) Tj ET")
+    stream = DecodedStreamObject()
+    stream.set_data("\n".join(commands).encode("ascii"))
+    page[NameObject("/Contents")] = stream
+    output = io.BytesIO()
+    writer.write(output)
+    pages = parse_pdf_document(PDFDocumentInput(document_id="constructed-advances", content=output.getvalue()))
+    assert len(pages) == 1
+    assert "December 31, 2022" in pages[0].text
+    assert "Revenue 900" in pages[0].text
 
 
 def test_answer_style_instructions_do_not_hide_separate_financial_statements():
