@@ -552,9 +552,11 @@ call `reactivate()` first and then revise the content against the new head. A ba
 than once, and only the first of identical new
 entries is retained. `reason` uses the same normalization and length validation as `MemoryChange.reason`. The reason on
 an explicit input is copied into its add or revise change. A candidate generator with no reliable reason must use
-`None` rather than invent one. After NFC and surrounding-whitespace normalization, `text` must be non-empty and no more
-than 8192 bytes when encoded as UTF-8. This limit also ensures that the OceanBase `TEXT` full-text column can hold the
-tokens derived by analyzer v1.
+`None` rather than invent one. After NFC and surrounding-whitespace normalization, `text` must be non-empty. Ordinary
+entries retain an 8192-byte UTF-8 quota. An entry backed by exactly one verified `pdf-page` Source may contain up to
+1 MiB (1,048,576 bytes), preserving a complete page without truncation. Source resolution and operation-evidence checks
+still apply. Normalization, canonical encoding, hashing, and historical reads use the same quota. OceanBase stores
+entry bodies and derived analyzer-v1 tokens in `MEDIUMTEXT` columns. Ordinary entries do not receive the larger quota.
 
 ## remember()
 

@@ -20,6 +20,8 @@ import io
 import pytest
 
 from powercontext.builtin.artifacts.memory import MemoryEntryInput
+from powercontext.builtin.artifacts.memory.errors import InvalidMemoryCandidateError
+from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime import (
     BuiltinConfig,
     GetMemoryEntryRequest,
@@ -127,6 +129,33 @@ def test_unused_trailing_text_advance_does_not_split_words_or_drop_rotated_text(
     assert "December 31, 2022" in pages[0].text
     assert "Net income 300" in pages[0].text
     assert "Revenue 900" in pages[0].text
+
+
+def test_long_captured_page_remains_complete_after_persistence_and_restart(tmp_path):
+    async def scenario():
+        config = BuiltinConfig(database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'long-page.db'}"))
+        text = "ACME_2026\n" + "Annual report financial performance and cash flow 利润 2026. " * 200
+        assert len(text.encode("utf-8")) > 8192
+        async with open_builtin_runtime(config, candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Long captured page", summary="Full page evidence", idempotency_key="long-page")
+            )
+            await _store_pages(runtime, scope.scope_id, (text,))
+            memory = runtime.memory.for_scope(scope.scope_id)
+            citations = await search_pdf_pages(memory, "ACME financial performance 2026", limit=1)
+            assert len(citations) == 1
+            assert (await memory.get(GetMemoryEntryRequest(citation=citations[0]))).entry.text == text.strip()
+            # An unbacked ordinary Memory entry retains its existing quota.
+            with pytest.raises(InvalidMemoryCandidateError, match="8192 UTF-8 bytes"):
+                await memory.remember(RememberMemoryRequest(entries=(MemoryEntryInput(kind="note", text=text),)))
+        async with open_builtin_runtime(config) as runtime:
+            restored = await runtime.memory.for_scope(scope.scope_id).get(GetMemoryEntryRequest(citation=citations[0]))
+            assert restored.entry.text == text.strip()
+            assert len(restored.entry.sources) == 1
+            assert restored.entry.sources[0].source_type == "pdf-page"
+
+    asyncio.run(scenario())
 
 
 def test_answer_style_instructions_do_not_hide_separate_financial_statements():

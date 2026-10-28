@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 
 import pytest
@@ -130,6 +131,25 @@ def test_limits_are_measured_after_normalization() -> None:
         validate_identifier("记忆")
     with pytest.raises(ValueError, match="128"):
         validate_identifier("x" * 129)
+
+
+def test_captured_page_quota_is_preserved_by_canonical_encoding_and_hashing() -> None:
+    reference = {"source_type": "pdf-page", "source_id": "pdf:captured-page"}
+    body = "完整财报页面 evidence " * 1000
+    encoded = entry_content_bytes(kind="source-evidence", text=body, source_refs=(reference,), artifact_refs=())
+    restored = json.loads(encoded)
+    assert restored["text"] == body.strip()
+    assert entry_content_hash(kind="source-evidence", text=body, source_refs=(reference,), artifact_refs=()) == (
+        entry_content_hash(
+            kind=restored["kind"], text=restored["text"], source_refs=restored["source_refs"], artifact_refs=()
+        )
+    )
+    with pytest.raises(ValueError, match="8192 UTF-8 bytes"):
+        entry_content_bytes(
+            kind="note", text=body, source_refs=({"source_type": "plain-text", "source_id": "note"},), artifact_refs=()
+        )
+    with pytest.raises(ValueError, match="1048576 UTF-8 bytes"):
+        normalize_text("界" * (1024 * 1024 // 3 + 1), source_refs=(reference,))
 
 
 def test_retrieval_query_is_not_held_to_the_entry_body_byte_bound() -> None:
