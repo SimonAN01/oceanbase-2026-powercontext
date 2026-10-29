@@ -593,6 +593,7 @@ def _rank_pages(
     expansion: str,
     question: str,
     query_ranks: dict[tuple[str, str, int, str, str], float],
+    inferred_documents: frozenset[str],
 ) -> tuple[MemoryHit, ...]:
     """Fuse topic retrieval ranks with BM25 over the actual retrieved page text."""
     documents = [_terms(hit.text) for hit in hits]
@@ -602,7 +603,7 @@ def _rank_pages(
     weights = dict.fromkeys(_terms(expansion), 0.35)
     weights.update(dict.fromkeys(_terms(query), 1.0))
     focus = _statement_focus(question)
-    named_documents = _named_documents(hits, question)
+    named_documents = _named_documents(hits, question) or inferred_documents
     priorities = [
         (-int(hit.text.partition("\n")[0] in named_documents), -int(_statement_page(hit.text, focus))) for hit in hits
     ]
@@ -661,9 +662,69 @@ def _queries(question: str) -> tuple[str, str, tuple[str, ...]]:
     return primary, " ".join((*concepts, *phrases, *statement_terms)), queries
 
 
+async def _search_document_mentions(
+    memory: ScopedMemoryApplication, question: str, limit: int
+) -> tuple[tuple[MemoryHit, ...], frozenset[str]]:
+    from powercontext.builtin.runtime.models import SearchMemoryRequest
+
+    inferred_documents: set[str] = set()
+    hits: dict[tuple[str, str, int, str, str], MemoryHit] = {}
+    primary_terms = set(analyze_fts_query(question.partition("?")[0]).split())
+    headings = {
+        "item",
+        "section",
+        "note",
+        "legal",
+        "proceedings",
+        "report",
+        "annual",
+        "quarterly",
+        "statement",
+        "statements",
+        "cash",
+        "flow",
+        "flows",
+        "balance",
+        "sheet",
+        "sheets",
+        "consolidated",
+        "combined",
+        "condensed",
+        "financial",
+    }
+    mentions = {
+        match[0]
+        for match in re.finditer(r"\b[A-Za-z0-9]+(?:[.&-][A-Za-z0-9]+)*", question.partition("?")[0])
+        if len(match[0]) > 1
+        and any(character.isupper() for character in match[0])
+        and set(analyze_fts_query(match[0]).split()).intersection(primary_terms)
+        and match[0].casefold() not in headings
+        and not _REPORT_YEARS.fullmatch(match[0])
+        and not _NUMERIC_QUESTION.fullmatch(match[0].casefold())
+    }
+    for mention in sorted(mentions):
+        page = await memory.search(
+            SearchMemoryRequest(query=analyze_fts_query(mention), limit=max(200, limit * 10), mode="fts")
+        )
+        literal = re.compile(r"(?<!\w)" + re.escape(mention) + r"(?!\w)", re.IGNORECASE)
+        texts: dict[str, set[str]] = {}
+        for hit in page.hits:
+            hits.setdefault(_hit_key(hit), hit)
+            identity, _, body = hit.text.partition("\n")
+            if literal.search(body):
+                texts.setdefault(identity, set()).add(body)
+        counts = sorted(((len(values), identity) for identity, values in texts.items()), reverse=True)
+        # A reference in another report must not become its identity. Count
+        # distinct page texts, rather than duplicate Memory entries, and
+        # retain ordinary topic ranking when the association is ambiguous.
+        if counts and counts[0][0] >= max(2, 2 * counts[1][0] if len(counts) > 1 else 2):
+            inferred_documents.add(counts[0][1])
+    return tuple(hits.values()), frozenset(inferred_documents)
+
+
 async def _search_candidates(
     memory: ScopedMemoryApplication, queries: tuple[str, ...], question: str, limit: int
-) -> tuple[tuple[MemoryHit, ...], dict[tuple[str, str, int, str, str], float]]:
+) -> tuple[tuple[MemoryHit, ...], dict[tuple[str, str, int, str, str], float], frozenset[str]]:
     from powercontext.builtin.runtime.models import SearchMemoryRequest
 
     candidates: dict[tuple[str, str, int, str, str], MemoryHit] = {}
@@ -674,11 +735,17 @@ async def _search_candidates(
             key = _hit_key(hit)
             candidates.setdefault(key, hit)
             query_ranks[key] = query_ranks.get(key, 0.0) + 1.0 / (60 + rank)
+    named_documents = _named_documents(tuple(candidates.values()), question)
+    inferred_documents = frozenset()
+    if not named_documents:
+        mention_hits, inferred_documents = await _search_document_mentions(memory, question, limit)
+        for hit in mention_hits:
+            candidates.setdefault(_hit_key(hit), hit)
     # Short topic queries have a global top-N cutoff. In a long filing,
     # numerous matching notes can crowd a primary statement out of every
     # topic pool. Retrieve the named filing through the same public API before
     # reranking, expanding the request until Memory has no further hits.
-    for document in sorted(_named_documents(tuple(candidates.values()), question)):
+    for document in sorted(named_documents or inferred_documents):
         pool_limit = max(1000, limit * 10)
         while True:
             page = await memory.search(
@@ -689,7 +756,7 @@ async def _search_candidates(
             if len(page.hits) < pool_limit:
                 break
             pool_limit *= 2
-    return tuple(candidates.values()), query_ranks
+    return tuple(candidates.values()), query_ranks, frozenset(inferred_documents)
 
 
 async def search_pdf_pages(
@@ -701,7 +768,7 @@ async def search_pdf_pages(
     if type(limit) is not int or limit < 1 or not question.strip():
         raise ValueError("invalid-pdf-search")
     query, expansion, queries = _queries(question)
-    candidates, query_ranks = await _search_candidates(memory, queries, question, limit)
+    candidates, query_ranks, inferred_documents = await _search_candidates(memory, queries, question, limit)
     citations: list[MemoryCitation] = []
     seen_pages: set[str] = set()
     deferred: list[MemoryCitation] = []
@@ -711,7 +778,7 @@ async def search_pdf_pages(
     # contain many subsidiary statements. Leave room for narrative evidence;
     # unused slots are backfilled from the deferred statements below.
     statement_slots = max(1, limit // 5)
-    for hit in _rank_pages(candidates, query, expansion, question, query_ranks):
+    for hit in _rank_pages(candidates, query, expansion, question, query_ranks, inferred_documents):
         citation = MemoryCitation(
             memory_ref=hit.memory_ref, entry_id=hit.entry_id, entry_version_id=hit.entry_version_id
         )

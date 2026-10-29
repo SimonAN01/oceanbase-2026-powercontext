@@ -355,6 +355,38 @@ def test_many_financial_notes_cannot_hide_the_named_documents_primary_statement(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("company", ["ACME", "3M", "A&T"])
+@pytest.mark.parametrize(
+    ("metric", "heading"),
+    [("current ratio", "Consolidated Balance Sheets"), ("Cash Flow", "Consolidated Statements of Cash Flows")],
+)
+def test_opaque_document_id_keeps_the_named_companys_statement(company, metric, heading):
+    async def scenario():
+        target = f"d93ac471c2b6408a\n{heading}\nAssets 100. Liabilities 40. Operating cash flows 60."
+        company_pages = (
+            f"d93ac471c2b6408a\n{company} annual report. Our business and operations.",
+            f"d93ac471c2b6408a\n{company} management report. Corporate governance and directors.",
+        )
+        other_pages = tuple(
+            f"b74ce8f021a69d30\n{heading}\nDivision {number}. "
+            + (f"An investment in {company}. " if number == 0 else "")
+            + f"FY2026 {metric} balance sheet assets liabilities. " * 3
+            for number in range(25)
+        )
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Opaque filing", summary="Company from page text", idempotency_key="opaque")
+            )
+            memory = runtime.memory.for_scope(scope.scope_id)
+            await _store_pages(runtime, scope.scope_id, (*other_pages, *company_pages, target))
+            citations = await search_pdf_pages(memory, f"What is {company}'s FY2026 {metric}?", limit=1)
+            assert len(citations) == 1
+            assert (await memory.get(GetMemoryEntryRequest(citation=citations[0]))).entry.text == target
+
+    asyncio.run(scenario())
+
+
 def test_many_primary_statements_cannot_hide_a_querys_narrative_evidence():
     async def scenario():
         target = "ACME_2026\nRevenue by sales channel\nDigital channels contributed 35 percent of revenue."
@@ -468,10 +500,13 @@ def test_comparative_figures_remain_available_when_the_requested_filing_is_absen
     asyncio.run(scenario())
 
 
-def test_one_companys_matching_year_does_not_hide_another_companys_report():
+@pytest.mark.parametrize("opaque", [False, True])
+def test_one_companys_matching_year_does_not_hide_another_companys_report(opaque):
     async def scenario():
-        target = "BETA_2027\nBusiness segments\nACME and BETA FY2026 reportable business segments comparison."
-        other_pages = tuple(f"ACME_2026\nBusiness segments {i}\nACME reports its FY2026 segments." for i in range(22))
+        first_id, second_id = ("d93ac471c2b6408a", "b74ce8f021a69d30") if opaque else ("ACME_2026", "BETA_2027")
+        target = f"{second_id}\nBusiness segments\nACME and BETA FY2026 reportable business segments comparison."
+        other_pages = tuple(f"{first_id}\nBusiness segments {i}\nACME reports its FY2026 segments." for i in range(22))
+        headers = (f"{second_id}\nBETA annual report.", f"{second_id}\nBETA corporate governance report.")
         async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
             assert runtime.scopes is not None
             scope = await runtime.scopes.create(
@@ -480,7 +515,7 @@ def test_one_companys_matching_year_does_not_hide_another_companys_report():
                 )
             )
             memory = runtime.memory.for_scope(scope.scope_id)
-            await _store_pages(runtime, scope.scope_id, (*other_pages, target))
+            await _store_pages(runtime, scope.scope_id, (*other_pages, *headers, target))
             citations = await search_pdf_pages(
                 memory, "From FY2026 reports, what business segments do ACME and BETA discuss?", limit=20
             )
