@@ -342,17 +342,20 @@ def _pdf_page_text(page: PageObject) -> str:
             resources = owner.get("/Resources")
             if resources is not None:
                 owner[NameObject("/Resources")] = _restore_marked_glyphs(stream, resources.get_object())
-            if _normalize_text_positions(stream):
-                if is_page:
-                    owner[NameObject("/Contents")] = stream
-                else:
-                    replacement = DecodedStreamObject()
-                    replacement.update({
-                        key: value for key, value in owner.items() if key not in ("/Length", "/Filter", "/DecodeParms")
-                    })
-                    replacement.set_data(stream.get_data())
-                    owner = replacement
-                    normalized[identity] = owner
+            changed = _normalize_text_positions(stream)
+            if is_page:
+                # Reuse the parsed operators even when their positions needed
+                # no repair. Reopening the original stream parses every glyph
+                # a second time without changing the extracted text.
+                owner[NameObject("/Contents")] = stream
+            elif changed:
+                replacement = DecodedStreamObject()
+                replacement.update({
+                    key: value for key, value in owner.items() if key not in ("/Length", "/Filter", "/DecodeParms")
+                })
+                replacement.set_data(stream.get_data())
+                owner = replacement
+                normalized[identity] = owner
         resources = owner.get("/Resources")
         xobjects = resources.get_object().get("/XObject") if resources is not None else None
         if xobjects is not None:

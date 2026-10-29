@@ -26,6 +26,7 @@ _FTS_MIN_QUERY_COVERAGE = 0.25
 _FTS_MIN_MATCHED_TERMS = 2
 _FTS_SHORT_QUERY_MAX_TERMS = 2
 _MIN_SEMANTIC_SIMILARITY = 0.3
+_CJK_CHARACTERS = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0002fa1f]")
 
 # Query-only normalization: persisted Analyzer v1 projections remain unchanged. Negations
 # are deliberately absent; domain constraints such as "without a backup" remain evidence.
@@ -192,6 +193,10 @@ def analyze_text_with_spans(value: str) -> tuple[tuple[str, int, int], ...]:
     """Return Analyzer v1 terms with offsets in the NFC+casefold text."""
 
     normalized = unicodedata.normalize("NFC", value).casefold()
+    if normalized.isascii() or _CJK_CHARACTERS.search(normalized) is None:
+        # Python's Unicode \w matches precisely the alphanumeric-or-underscore
+        # runs below. CJK still uses its individual terms and adjacent bigrams.
+        return tuple((match[0], match.start(), match.end()) for match in re.finditer(r"\w+", normalized))
     terms: list[tuple[str, int, int]] = []
     word_start: int | None = None
     cjk: list[tuple[str, int]] = []
