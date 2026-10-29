@@ -444,6 +444,7 @@ PDF_PAGE_SOURCE_DEFINITION: SourceDefinition[PDFPageInput, PDFPageSource, PDFPag
 )
 
 _WORDS = re.compile(r"[a-z]+|\d+")
+_REPORT_YEARS = re.compile(r"(?<![a-z0-9])(?:fy)?((?:19|20)\d{2})(?![a-z0-9])", re.IGNORECASE)
 _FINANCIAL_EXPANSIONS = {
     "ebitda": "operating income depreciation amortization earnings interest taxes",
     "capex": "capital expenditures property plant equipment payments additions",
@@ -549,15 +550,28 @@ def _named_documents(hits: tuple[MemoryHit, ...], question: str) -> frozenset[st
         for width in range(1, min(4, len(query_words) - start) + 1)
     }
     filing_words = {"10k", "10q", "8k", "annual", "annualreport", "report", "earnings", "dated"}
-    return frozenset(
-        identity
-        for hit in hits
-        if (identity := hit.text.partition("\n")[0])
-        and any(
-            len(word) > 1 and re.search(r"[a-z]", word) and word not in filing_words and word in query_identity
-            for word in re.findall(r"[a-z0-9]+", identity.casefold())
+    documents = {
+        identity: company
+        for identity in {hit.text.partition("\n")[0] for hit in hits}
+        if (
+            company := frozenset(
+                word
+                for word in re.findall(r"[a-z0-9]+", identity.casefold())
+                if len(word) > 1 and re.search(r"[a-z]", word) and word not in filing_words and word in query_identity
+            )
         )
-    )
+    }
+    matched = frozenset(documents)
+    years = set(_REPORT_YEARS.findall(question))
+    if len(years) == 1 and len(set(documents.values())) == 1:
+        matching_year = frozenset(
+            identity for identity in matched if years.intersection(_REPORT_YEARS.findall(identity))
+        )
+        # A later report may contain the requested year's comparative figures.
+        # Retain all named reports if none has that year, or several years are
+        # explicitly requested, rather than discarding real evidence.
+        return matching_year or matched
+    return matched
 
 
 def _hit_key(hit: MemoryHit) -> tuple[str, str, int, str, str]:

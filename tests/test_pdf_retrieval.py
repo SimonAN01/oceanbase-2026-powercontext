@@ -421,6 +421,76 @@ def test_short_topic_rankings_preserve_narrative_pages(question, target, backgro
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("year", [2026, 2027])
+def test_report_year_distinguishes_filings_of_the_same_company(year):
+    async def scenario():
+        target = f"ACME_{year}\nConsolidated Statement of Income\nNet income 42."
+        previous = f"ACME_{year - 1}\nConsolidated Statement of Income\n" + (
+            f"ACME net income directly outlined in its FY{year} income statement outlook. " * 3
+        )
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Filing years", summary="Same company, different reports", idempotency_key="years")
+            )
+            memory = runtime.memory.for_scope(scope.scope_id)
+            await _store_pages(runtime, scope.scope_id, (previous, target))
+            citations = await search_pdf_pages(
+                memory, f"What net income is directly outlined in ACME's FY{year} income statement?", limit=1
+            )
+            assert len(citations) == 1
+            assert (await memory.get(GetMemoryEntryRequest(citation=citations[0]))).entry.text == target
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "question",
+    ["What was ACME's FY2026 net income?", "In ACME_2027, what was its restated FY2026 net income?"],
+)
+def test_comparative_figures_remain_available_when_the_requested_filing_is_absent(question):
+    async def scenario():
+        target = "ACME_2027\nConsolidated Statement of Income\nRestated FY2026 net income 42."
+        other = "BETA_2026\nConsolidated Statement of Income\nACME FY2026 net income outlook and restated figures."
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(
+                    title="Comparative figures", summary="Available filing evidence", idempotency_key="comparatives"
+                )
+            )
+            memory = runtime.memory.for_scope(scope.scope_id)
+            await _store_pages(runtime, scope.scope_id, (other, target))
+            citations = await search_pdf_pages(memory, question, limit=1)
+            assert len(citations) == 1
+            assert (await memory.get(GetMemoryEntryRequest(citation=citations[0]))).entry.text == target
+
+    asyncio.run(scenario())
+
+
+def test_one_companys_matching_year_does_not_hide_another_companys_report():
+    async def scenario():
+        target = "BETA_2027\nBusiness segments\nACME and BETA FY2026 reportable business segments comparison."
+        other_pages = tuple(f"ACME_2026\nBusiness segments {i}\nACME reports its FY2026 segments." for i in range(22))
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(
+                    title="Two companies", summary="Distinct available filing years", idempotency_key="companies"
+                )
+            )
+            memory = runtime.memory.for_scope(scope.scope_id)
+            await _store_pages(runtime, scope.scope_id, (*other_pages, target))
+            citations = await search_pdf_pages(
+                memory, "From FY2026 reports, what business segments do ACME and BETA discuss?", limit=20
+            )
+            assert target in {
+                (await memory.get(GetMemoryEntryRequest(citation=value))).entry.text for value in citations
+            }
+
+    asyncio.run(scenario())
+
+
 def test_statement_diversity_backfills_when_only_statement_pages_are_available():
     async def scenario():
         statements = tuple(
