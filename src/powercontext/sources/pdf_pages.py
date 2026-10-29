@@ -248,6 +248,30 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
         def __init__(self):
             super().__init__()
             active[-1] = self
+            self._last_text_position: tuple[list[float], list[float], float] | None = None
+
+        def _separate_rewound_word(self):
+            if self._last_text_position is None:
+                return
+            cm, matrix, font_size = self._last_text_position
+            if cm != self.cm_matrix or matrix[:4] != self.tm_matrix[:4]:
+                return
+            a, b, _, _, x, y = matrix
+            scale = a * a + b * b
+            if not scale:
+                return
+            dx, dy = self.tm_matrix[4] - x, self.tm_matrix[5] - y
+            advance = (dx * a + dy * b) / scale
+            lift = (-dx * b + dy * a) / scale
+            height = max(abs(font_size), abs(self.font_size))
+            # A substantial rewind along the same baseline starts another
+            # run. Tf may already have flushed the preceding glyphs to output.
+            # Small backwards kerning and genuine line changes stay untouched.
+            if advance < -2 * height and abs(lift) <= height / 2:
+                if self.text and not self.text[-1].isspace():
+                    self.text += " "
+                elif not self.text and self.output and not self.output[-1].isspace():
+                    self.output += " "
 
         @override
         def process_operation(self, operator, operands):
@@ -255,7 +279,12 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
             # visible separator is useful, but its font width must not count
             # again: the actual numeric advance is accounted for below.
             synthetic_space = operator == b"Tj" and operands == [" "] and type(operands[0]) is str
+            paints_text = operator == b"Tj" and not synthetic_space and bool(operands) and bool(operands[0])
+            if paints_text:
+                self._separate_rewound_word()
             super().process_operation(operator, operands)
+            if paints_text:
+                self._last_text_position = (self.cm_matrix.copy(), self.tm_matrix.copy(), self.font_size)
             if synthetic_space:
                 self._actual_str_size["str_widths"] -= self.font.space_width * self.font_size
 

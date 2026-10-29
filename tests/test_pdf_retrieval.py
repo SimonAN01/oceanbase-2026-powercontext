@@ -187,6 +187,51 @@ def test_new_text_object_separates_columns_before_showing_kerned_words(rotation)
     assert "Column" in pages[0].text
 
 
+@pytest.mark.parametrize(
+    ("matrix", "nested"), [("1 0 0 1", False), ("0 1 -1 0", False), ("-1 0 0 -1", True), ("0 -1 1 0", True)]
+)
+def test_repainting_a_positioned_word_does_not_merge_its_last_and_first_letters(matrix, nested):
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
+
+    writer = pypdf.PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+    font = DictionaryObject({
+        NameObject("/Type"): NameObject("/Font"),
+        NameObject("/Subtype"): NameObject("/Type1"),
+        NameObject("/BaseFont"): NameObject("/Courier"),
+    })
+    resources = DictionaryObject({
+        NameObject("/Font"): DictionaryObject({NameObject("/F1"): font, NameObject("/F2"): font})
+    })
+    a, b, _, _ = map(float, matrix.split())
+    commands = ["BT"]
+    for _ in range(2):
+        for position, letter in enumerate("ALPHA"):
+            commands.append(
+                f"/F{position % 2 + 1} 12 Tf {matrix} {180 + position * 7.2 * a} {400 + position * 7.2 * b} Tm ({letter}) Tj"
+            )
+    commands.append("ET")
+    stream = DecodedStreamObject()
+    stream.set_data(" ".join(commands).encode())
+    if nested:
+        stream.update({
+            NameObject("/Type"): NameObject("/XObject"),
+            NameObject("/Subtype"): NameObject("/Form"),
+            NameObject("/BBox"): ArrayObject([NumberObject(n) for n in (0, 0, 612, 792)]),
+            NameObject("/Resources"): resources,
+        })
+        resources = DictionaryObject({NameObject("/XObject"): DictionaryObject({NameObject("/Fm"): stream})})
+        stream = DecodedStreamObject()
+        stream.set_data(b"q /Fm Do Q")
+    page[NameObject("/Resources")] = resources
+    page[NameObject("/Contents")] = stream
+    output = io.BytesIO()
+    writer.write(output)
+    pages = parse_pdf_document(PDFDocumentInput(document_id="constructed-repainting", content=output.getvalue()))
+    assert pages[0].text.split() == ["ALPHA", "ALPHA"]
+
+
 @pytest.mark.parametrize("depth", [0, 1, 2])
 @pytest.mark.parametrize("rotation", ["1 0 0 1", "0 1 -1 0"])
 @pytest.mark.parametrize("matrix_translation", [False, True])
