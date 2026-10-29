@@ -560,8 +560,24 @@ def _named_documents(hits: tuple[MemoryHit, ...], question: str) -> frozenset[st
     )
 
 
-def _rank_pages(hits: tuple[MemoryHit, ...], query: str, expansion: str, question: str) -> tuple[MemoryHit, ...]:
-    """BM25 over actual retrieved page text, with lower-weight concept expansion."""
+def _hit_key(hit: MemoryHit) -> tuple[str, str, int, str, str]:
+    return (
+        hit.memory_ref.family,
+        hit.memory_ref.artifact_id,
+        hit.memory_ref.revision,
+        hit.entry_id,
+        hit.entry_version_id,
+    )
+
+
+def _rank_pages(
+    hits: tuple[MemoryHit, ...],
+    query: str,
+    expansion: str,
+    question: str,
+    query_ranks: dict[tuple[str, str, int, str, str], float],
+) -> tuple[MemoryHit, ...]:
+    """Fuse topic retrieval ranks with BM25 over the actual retrieved page text."""
     documents = [_terms(hit.text) for hit in hits]
     lengths = [sum(document.values()) for document in documents]
     average = sum(lengths) / len(lengths) if lengths else 1.0
@@ -570,6 +586,9 @@ def _rank_pages(hits: tuple[MemoryHit, ...], query: str, expansion: str, questio
     weights.update(dict.fromkeys(_terms(query), 1.0))
     focus = _statement_focus(question)
     named_documents = _named_documents(hits, question)
+    priorities = [
+        (-int(hit.text.partition("\n")[0] in named_documents), -int(_statement_page(hit.text, focus))) for hit in hits
+    ]
 
     def score(index: int) -> float:
         document = documents[index]
@@ -584,18 +603,15 @@ def _rank_pages(hits: tuple[MemoryHit, ...], query: str, expansion: str, questio
             if document[term]
         )
 
-    return tuple(
-        hits[index]
-        for index in sorted(
-            range(len(hits)),
-            key=lambda index: (
-                -int(hits[index].text.partition("\n")[0] in named_documents),
-                -int(_statement_page(hits[index].text, focus)),
-                -score(index),
-                index,
-            ),
-        )
-    )
+    ranking = sorted(range(len(hits)), key=lambda index: (*priorities[index], -score(index), index))
+    # RRF preserves a short topic query's signal without requiring the Memory
+    # and page-level BM25 scores to share a numerical scale. The reranker is
+    # one additional ranking; named-document pool expansion casts no vote.
+    fused = {
+        index: query_ranks.get(_hit_key(hits[index]), 0.0) + 1.0 / (60 + rank) for rank, index in enumerate(ranking, 1)
+    }
+    # sorted is stable, so BM25 order resolves equal fused scores.
+    return tuple(hits[index] for index in sorted(ranking, key=lambda index: (*priorities[index], -fused[index])))
 
 
 def _queries(question: str) -> tuple[str, str, tuple[str, ...]]:
@@ -630,21 +646,17 @@ def _queries(question: str) -> tuple[str, str, tuple[str, ...]]:
 
 async def _search_candidates(
     memory: ScopedMemoryApplication, queries: tuple[str, ...], question: str, limit: int
-) -> tuple[MemoryHit, ...]:
+) -> tuple[tuple[MemoryHit, ...], dict[tuple[str, str, int, str, str], float]]:
     from powercontext.builtin.runtime.models import SearchMemoryRequest
 
     candidates: dict[tuple[str, str, int, str, str], MemoryHit] = {}
+    query_ranks: dict[tuple[str, str, int, str, str], float] = {}
     for text in queries:
         page = await memory.search(SearchMemoryRequest(query=text, limit=max(200, limit * 10), mode="fts"))
-        for hit in page.hits:
-            key = (
-                hit.memory_ref.family,
-                hit.memory_ref.artifact_id,
-                hit.memory_ref.revision,
-                hit.entry_id,
-                hit.entry_version_id,
-            )
+        for rank, hit in enumerate(page.hits, 1):
+            key = _hit_key(hit)
             candidates.setdefault(key, hit)
+            query_ranks[key] = query_ranks.get(key, 0.0) + 1.0 / (60 + rank)
     # Short topic queries have a global top-N cutoff. In a long filing,
     # numerous matching notes can crowd a primary statement out of every
     # topic pool. Retrieve the named filing through the same public API before
@@ -656,18 +668,11 @@ async def _search_candidates(
                 SearchMemoryRequest(query=analyze_fts_query(document), limit=pool_limit, mode="fts")
             )
             for hit in page.hits:
-                key = (
-                    hit.memory_ref.family,
-                    hit.memory_ref.artifact_id,
-                    hit.memory_ref.revision,
-                    hit.entry_id,
-                    hit.entry_version_id,
-                )
-                candidates.setdefault(key, hit)
+                candidates.setdefault(_hit_key(hit), hit)
             if len(page.hits) < pool_limit:
                 break
             pool_limit *= 2
-    return tuple(candidates.values())
+    return tuple(candidates.values()), query_ranks
 
 
 async def search_pdf_pages(
@@ -679,7 +684,7 @@ async def search_pdf_pages(
     if type(limit) is not int or limit < 1 or not question.strip():
         raise ValueError("invalid-pdf-search")
     query, expansion, queries = _queries(question)
-    candidates = await _search_candidates(memory, queries, question, limit)
+    candidates, query_ranks = await _search_candidates(memory, queries, question, limit)
     citations: list[MemoryCitation] = []
     seen_pages: set[str] = set()
     deferred: list[MemoryCitation] = []
@@ -689,7 +694,7 @@ async def search_pdf_pages(
     # contain many subsidiary statements. Leave room for narrative evidence;
     # unused slots are backfilled from the deferred statements below.
     statement_slots = max(1, limit // 5)
-    for hit in _rank_pages(candidates, query, expansion, question):
+    for hit in _rank_pages(candidates, query, expansion, question, query_ranks):
         citation = MemoryCitation(
             memory_ref=hit.memory_ref, entry_id=hit.entry_id, entry_version_id=hit.entry_version_id
         )

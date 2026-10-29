@@ -382,6 +382,45 @@ def test_many_primary_statements_cannot_hide_a_querys_narrative_evidence():
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    ("question", "target", "background", "distractor"),
+    [
+        (
+            "Has ACME reported any materially important ongoing legal battles in FY2026 and FY2025?",
+            "Legal proceedings\nLitigation and regulatory proceedings have no material adverse effect.",
+            "Routine legal policies and settlements discussion.",
+            "ACME reported materially important ongoing disclosures in FY2026 and FY2025.",
+        ),
+        (
+            "What are the geographies that ACME primarily operates in as of FY2026?",
+            "Business operations\nOur segments and divisions serve countries and regions worldwide.",
+            "International geographic policy discussion.",
+            "ACME primarily operates in FY2026. These are its latest corporate disclosures.",
+        ),
+    ],
+)
+def test_short_topic_rankings_preserve_narrative_pages(question, target, background, distractor):
+    async def scenario():
+        evidence = "ACME_2026\n" + target
+        notes = tuple(f"ACME_2026\nAccounting note {i}\n{distractor * 3}" for i in range(28))
+        routine = tuple(
+            f"ACME_2026\nGeneral policy {i}\n{background} " + "Unrelated disclosure detail. " * 90 for i in range(80)
+        )
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Narrative ranks", summary="Topic coverage", idempotency_key="topic-ranks")
+            )
+            memory = runtime.memory.for_scope(scope.scope_id)
+            await _store_pages(runtime, scope.scope_id, (*notes, *routine, evidence))
+            citations = await search_pdf_pages(memory, question, limit=20)
+            entries = [(await memory.get(GetMemoryEntryRequest(citation=value))).entry for value in citations]
+            assert evidence in {entry.text for entry in entries}
+            assert len(entries) == len({entry.sources[0].source_id for entry in entries}) == 20
+
+    asyncio.run(scenario())
+
+
 def test_statement_diversity_backfills_when_only_statement_pages_are_available():
     async def scenario():
         statements = tuple(
