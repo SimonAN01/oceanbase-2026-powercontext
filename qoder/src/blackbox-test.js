@@ -9,20 +9,8 @@ import { checkComparability, calculateDifference, buildComparisonGroup } from '.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { spawnSync } from 'node:child_process';
-
-if (!process.env.LEDGER_TEST_DB) {
-  const tempDir = mkdtempSync(join(tmpdir(), 'seekdb-test-'));
-  try {
-    const run = spawnSync(process.execPath, [process.argv[1]], {
-      env: { ...process.env, LEDGER_TEST_DB: join(tempDir, '.seekdb') },
-      stdio: 'inherit',
-    });
-    process.exitCode = run.status ?? 1;
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-}
+import { fork } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const DB_PATH = process.env.LEDGER_TEST_DB;
 
@@ -285,9 +273,24 @@ async function main() {
   return failed === 0 ? 0 : 1;
 }
 
-if (DB_PATH) {
-  main().then((status) => process.exit(status), (err) => {
+if (process.send && DB_PATH) {
+  main().then((status) => process.send(status), (err) => {
     console.error('Test failed:', err);
-    process.exit(1);
+    process.send(1);
+  });
+} else {
+  const tempDir = DB_PATH ? null : mkdtempSync(join(tmpdir(), 'seekdb-test-'));
+  const child = fork(fileURLToPath(import.meta.url), {
+    env: { ...process.env, LEDGER_TEST_DB: DB_PATH || join(tempDir, '.seekdb') },
+  });
+  let status = 1;
+  // The native binding can keep running or abort during process.exit().
+  child.once('message', (result) => {
+    status = result === 0 ? 0 : 1;
+    child.kill();
+  });
+  child.once('exit', () => {
+    if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+    process.exitCode = status;
   });
 }

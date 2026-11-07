@@ -16,6 +16,27 @@ npm start
 
 访问 `http://127.0.0.1:3000`。`npm run seed` 在空账本载入 7 条虚构记录，已有记录会保留。应用默认只监听本机，数据库位于当前目录的 `.seekdb/`。Qoder Sites 展示项目、截图及复现步骤，完整账本在本机运行。
 
+### Linux x86_64
+
+原生 seekdb 需要 `libaio.so.1`，Debian 12 可通过系统的 `libaio1` 包安装。Ubuntu 24.04 默认提供 `libaio.so.1t64`，可在项目目录解包 Debian 12 的官方 amd64 包，无需修改系统库。在 Node.js 24 环境执行 `npm ci` 后，如系统缺少 `libaio.so.1`，先运行以下命令。
+
+```bash
+curl -fsSLO https://deb.debian.org/debian/pool/main/liba/libaio/libaio1_0.3.113-4_amd64.deb
+echo 'd1476e4beab3d85f8a7d31de94c27472711ed3ef399ce70708e24b259426125b  libaio1_0.3.113-4_amd64.deb' | sha256sum -c - &&
+  dpkg-deb -x libaio1_0.3.113-4_amd64.deb .libaio-bookworm
+export LD_LIBRARY_PATH="$PWD/.libaio-bookworm/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+```
+
+下载锁定版本的原生组件后，在启动 Node.js 时预加载 seekdb，确保原生库能分配静态线程本地存储。启动服务、重启和运行测试均使用相同的库路径。以下步骤已在 Ubuntu 24.04 x86_64 验证。
+
+```bash
+bindings_dir=$(NODE_USE_ENV_PROXY=1 node -e \
+  'require("./node_modules/@seekdb/js-bindings/download.js").ensureBindingsDownloaded().then(console.log)')
+LD_PRELOAD="$bindings_dir/libseekdb.so" node src/seed.js
+LD_PRELOAD="$bindings_dir/libseekdb.so" node src/blackbox-test.js
+LD_PRELOAD="$bindings_dir/libseekdb.so" node src/server.js
+```
+
 ## 验证样例
 
 1. 搜索 `Cutout`，再选择 `CIFAR-10`、`train/test 80/20` 和 `accuracy`，应找到 `ResNet-56 + Cutout`。
