@@ -264,6 +264,48 @@ def test_pdf_rejects_a_truncated_end_of_file_marker():
             parse_pdf_document(truncated)
 
 
+@pytest.mark.parametrize("encrypted", [False, True])
+@pytest.mark.parametrize("declared_count", [1, 2, 3])
+def test_pdf_page_tree_count_matches_its_physical_pages(encrypted, declared_count):
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import NameObject, NumberObject
+
+    writer = pypdf.PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    writer.add_blank_page(width=100, height=100)
+    writer.get_object(writer._pages)[NameObject("/Count")] = NumberObject(declared_count)
+    if encrypted:
+        writer.encrypt(user_password="", owner_password="owner")  # noqa: S106 - synthetic PDF fixture
+    output = io.BytesIO()
+    writer.write(output)
+    document = PDFDocumentInput(document_id="page-tree-count", content=output.getvalue())
+
+    if declared_count == 2:
+        assert [page.page_number for page in parse_pdf_document(document)] == [1, 2]
+    else:
+        with pytest.raises(ValueError, match="unreadable-pdf-document"):
+            parse_pdf_document(document)
+
+
+def test_pdf_rejects_an_unsupported_filter_in_a_later_page():
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import EncodedStreamObject, NameObject
+
+    writer = pypdf.PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    page = writer.add_blank_page(width=100, height=100)
+    stream = EncodedStreamObject()
+    stream[NameObject("/Filter")] = NameObject("/UnrecognizedFilter")
+    stream._data = b"BT ET"
+    page[NameObject("/Contents")] = stream
+    output = io.BytesIO()
+    writer.write(output)
+    document = PDFDocumentInput(document_id="unsupported-filter", content=output.getvalue())
+
+    with pytest.raises(ValueError, match="unreadable-pdf-document"):
+        parse_pdf_document(document)
+
+
 @pytest.mark.parametrize("array", [False, True])
 def test_pdf_rejects_a_missing_content_stream_in_a_later_page(array):
     pypdf = pytest.importorskip("pypdf")

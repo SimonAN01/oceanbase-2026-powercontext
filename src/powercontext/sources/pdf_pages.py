@@ -36,7 +36,7 @@ from powercontext.sources.models import Source, SourceMaterialization
 from powercontext.sources.projections import TEXT_EVIDENCE_PROJECTION_KEY, TextEvidence
 
 if TYPE_CHECKING:
-    from pypdf import PageObject
+    from pypdf import PageObject, PdfReader
     from pypdf.generic import ContentStream, DictionaryObject, EncodedStreamObject, PdfObject, StreamObject
 
     from powercontext.builtin.artifacts.memory.models import MemoryHit
@@ -739,6 +739,26 @@ def _pdf_page_text(page: PageObject) -> str:
             page[NameObject("/Contents")] = original_contents
 
 
+def _complete_pdf_page_count(reader: PdfReader) -> int:
+    from pypdf.generic import DictionaryObject, NumberObject
+
+    tree = reader.root_object["/Pages"]
+    if not isinstance(tree, DictionaryObject):
+        raise TypeError("invalid-pdf-page-tree")
+    count = tree["/Count"]
+    if not isinstance(count, NumberObject) or count < 1:
+        raise ValueError("invalid-pdf-page-count")
+
+    # get_page flattens the physical tree. Unlike len(reader.pages), it
+    # does not trust /Count to limit access to pages in encrypted PDFs.
+    reader.get_page(count - 1)
+    try:
+        reader.get_page(count)
+    except IndexError:
+        return count
+    raise ValueError("pdf-page-count-mismatch")
+
+
 def parse_pdf_document(value: PDFDocumentInput) -> tuple[PDFPageInput, ...]:
     """Parse every page before publishing any results, including empty pages."""
     # pypdf is an optional source dependency; other Source types do not require it.
@@ -756,20 +776,27 @@ def parse_pdf_document(value: PDFDocumentInput) -> tuple[PDFPageInput, ...]:
         reader = PdfReader(io.BytesIO(value.content))
         if reader.is_encrypted and not reader.decrypt(""):
             raise ValueError("password-required")  # noqa: TRY301 - normalize all unreadable files below
-        pages = tuple(
+        count = _complete_pdf_page_count(reader)
+        return tuple(
             PDFPageInput(
                 document_id=value.document_id,
                 document_sha256=digest,
-                page_number=index,
-                text=_pdf_page_text(page),
+                page_number=index + 1,
+                text=_pdf_page_text(reader.get_page(index)),
             )
-            for index, page in enumerate(reader.pages, start=1)
+            for index in range(count)
         )
-    except (PyPdfError, OSError, ValueError, TypeError, KeyError, IndexError, RecursionError) as error:
+    except (
+        PyPdfError,
+        OSError,
+        ValueError,
+        TypeError,
+        KeyError,
+        IndexError,
+        RecursionError,
+        NotImplementedError,
+    ) as error:
         raise ValueError("unreadable-pdf-document") from error
-    if not pages:
-        raise ValueError("pdf-has-no-pages")
-    return pages
 
 
 class _PDFPageAdapter:
