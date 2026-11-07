@@ -584,6 +584,7 @@ PDF_PAGE_SOURCE_DEFINITION: SourceDefinition[PDFPageInput, PDFPageSource, PDFPag
 
 _WORDS = re.compile(r"[a-z]+|\d+")
 _REPORT_YEARS = re.compile(r"(?<![a-z0-9])(?:fy)?((?:19|20)\d{2})(?![a-z0-9])", re.IGNORECASE)
+_REGISTRANT_NAME = re.compile(r"^([^\n]+)\n\s*\(?exact name of (?:the )?registrant\b", re.IGNORECASE | re.MULTILINE)
 _FINANCIAL_EXPANSIONS = {
     "ebitda": "operating income depreciation amortization earnings interest taxes",
     "capex": "capital expenditures property plant equipment payments additions",
@@ -593,6 +594,10 @@ _FINANCIAL_EXPANSIONS = {
     "revenue": "sales revenues",
     "sales": "revenue revenues",
     "restructuring": "restructuring impairment charges expenses",
+    "acquire": "acquisition purchase consideration",
+    "divestiture": "divest divestment sale disposal transaction",
+    "lending": "loan loans portfolio credit",
+    "repurchase": "repurchase repurchases authorization",
     "geography": "geographic geographical countries regions international worldwide segments divisions",
     "geographies": "geographic geographical countries regions international worldwide segments divisions",
     "legal": "litigation contingencies proceedings settlements",
@@ -772,12 +777,20 @@ def _rank_pages(
     return tuple(hits[index] for index in sorted(ranking, key=lambda index: (*priorities[index], -fused[index])))
 
 
+def _question_clauses(question: str) -> tuple[str, ...]:
+    # Keep each explicit question and omit trailing answer-style instructions.
+    body, separator, _ = question.rpartition("?")
+    if not separator:
+        return (question,)
+    return tuple(clause.strip() for clause in body.split("?") if clause.strip())
+
+
 def _queries(question: str) -> tuple[str, str, tuple[str, ...]]:
-    # The first question carries the information need; later sentences often
-    # specify answer formatting. Financial definitions still contribute concepts.
-    primary = analyze_fts_query(question.partition("?")[0])
+    primary_queries = tuple(analyze_fts_query(clause) for clause in _question_clauses(question))
+    primary = " ".join(primary_queries)
+    financial_text = re.sub(r"\bbuy\s+back\b", "repurchase", question.casefold())
     concepts = tuple(
-        dict.fromkeys(_FINANCIAL_EXPANSIONS[term] for term in _terms(question) if term in _FINANCIAL_EXPANSIONS)
+        dict.fromkeys(_FINANCIAL_EXPANSIONS[term] for term in _terms(financial_text) if term in _FINANCIAL_EXPANSIONS)
     )
     focus = _statement_focus(question)
     statement_terms = tuple(_STATEMENT_SEARCH_TERMS[kind] for kind in focus)
@@ -798,7 +811,9 @@ def _queries(question: str) -> tuple[str, str, tuple[str, ...]]:
     )
     # Separate short concept queries prevent a long instruction from imposing a
     # lexical coverage floor that suppresses a table containing only one input.
-    queries = tuple(dict.fromkeys(value for value in (primary, *concept_queries, *phrases, *statement_terms) if value))
+    queries = tuple(
+        dict.fromkeys(value for value in (*primary_queries, *concept_queries, *phrases, *statement_terms) if value)
+    )
     return primary, " ".join((*concepts, *phrases, *statement_terms)), queries
 
 
@@ -809,7 +824,8 @@ async def _search_document_mentions(
 
     inferred_documents: set[str] = set()
     hits: dict[tuple[str, str, int, str, str], MemoryHit] = {}
-    primary_terms = set(analyze_fts_query(question.partition("?")[0]).split())
+    question_text = " ".join(_question_clauses(question))
+    primary_terms = set(analyze_fts_query(question_text).split())
     headings = {
         "item",
         "section",
@@ -834,7 +850,7 @@ async def _search_document_mentions(
     }
     mentions = {
         match[0]
-        for match in re.finditer(r"\b[A-Za-z0-9]+(?:[.&-][A-Za-z0-9]+)*", question.partition("?")[0])
+        for match in re.finditer(r"\b[A-Za-z0-9]+(?:[.&-][A-Za-z0-9]+)*", question_text)
         if len(match[0]) > 1
         and any(character.isupper() for character in match[0])
         and set(analyze_fts_query(match[0]).split()).intersection(primary_terms)
@@ -842,11 +858,13 @@ async def _search_document_mentions(
         and not _REPORT_YEARS.fullmatch(match[0])
         and not _NUMERIC_QUESTION.fullmatch(match[0].casefold())
     }
-    for mention in sorted(mentions):
+    literals = {
+        mention: re.compile(r"(?<!\w)" + re.escape(mention) + r"(?!\w)", re.IGNORECASE) for mention in sorted(mentions)
+    }
+    for mention, literal in literals.items():
         page = await memory.search(
             SearchMemoryRequest(query=analyze_fts_query(mention), limit=max(200, limit * 10), mode="fts")
         )
-        literal = re.compile(r"(?<!\w)" + re.escape(mention) + r"(?!\w)", re.IGNORECASE)
         texts: dict[str, set[str]] = {}
         for hit in page.hits:
             hits.setdefault(_hit_key(hit), hit)
@@ -859,6 +877,19 @@ async def _search_document_mentions(
         # retain ordinary topic ranking when the association is ambiguous.
         if counts and counts[0][0] >= max(2, 2 * counts[1][0] if len(counts) > 1 else 2):
             inferred_documents.add(counts[0][1])
+    if len(inferred_documents) > 1:
+        # A common issuer name can fill its FTS pool with commentary. Query
+        # the filing label separately to find covers and disambiguate names
+        # that recur in the discussion, such as a geographic market.
+        covers = await memory.search(SearchMemoryRequest(query="exact name registrant", limit=200, mode="fts"))
+        registered_documents = set()
+        for hit in covers.hits:
+            identity, _, body = hit.text.partition("\n")
+            registrant = _REGISTRANT_NAME.search(body)
+            if registrant and any(literal.search(registrant[1]) for literal in literals.values()):
+                registered_documents.add(identity)
+        if registered_documents:
+            inferred_documents = registered_documents
     return tuple(hits.values()), frozenset(inferred_documents)
 
 

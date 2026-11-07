@@ -696,6 +696,58 @@ def test_statement_diversity_backfills_when_only_statement_pages_are_available()
     asyncio.run(scenario())
 
 
+def test_report_cover_disambiguates_company_from_geographic_topic():
+    async def scenario():
+        cover = "opaque-a\nDeltaCrest, Inc.\n(Exact name of Registrant as specified in its charter)"
+        target = "opaque-a\nRevenue in Iceland from our winter and summer product lines was 31 million."
+        distractors = tuple(
+            f"opaque-b\nIcelandic sales of seasonal products in segment {number} increased." for number in range(12)
+        )
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Filing cover", summary="Disambiguate a named company", idempotency_key="filing-cover")
+            )
+            memory = runtime.memory.for_scope(scope.scope_id)
+            await _store_pages(
+                runtime, scope.scope_id, (cover, target, "opaque-a\nDeltaCrest annual report", *distractors)
+            )
+            citations = await search_pdf_pages(
+                memory, "What were DeltaCrest's Icelandic sales of seasonal products?", limit=3
+            )
+            entries = [(await memory.get(GetMemoryEntryRequest(citation=value))).entry for value in citations]
+            assert target in {entry.text for entry in entries}
+
+    asyncio.run(scenario())
+
+
+def test_multiple_questions_retrieve_evidence_for_each_subject():
+    async def scenario():
+        first = "opaque-filing\nAn environmental remediation provision was recognized for the closed factories."
+        second = "opaque-filing\nDeferred compensation benefits vest after five years of service."
+        distractors = tuple(
+            f"opaque-filing\nEnvironmental remediation work at operating facility {number} is continuing."
+            for number in range(12)
+        )
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Two questions", summary="Retrieve both notes", idempotency_key="two-questions")
+            )
+            memory = runtime.memory.for_scope(scope.scope_id)
+            await _store_pages(runtime, scope.scope_id, (first, second, *distractors))
+            citations = await search_pdf_pages(
+                memory,
+                "What was the environmental remediation provision for closed factories? "
+                "When do deferred compensation benefits vest? Answer concisely.",
+                limit=2,
+            )
+            entries = [(await memory.get(GetMemoryEntryRequest(citation=value))).entry for value in citations]
+            assert {entry.text for entry in entries} == {first, second}
+
+    asyncio.run(scenario())
+
+
 def test_answer_style_instructions_do_not_hide_separate_financial_statements():
     async def scenario():
         statements = (
