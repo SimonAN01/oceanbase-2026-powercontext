@@ -75,6 +75,43 @@ async def _store_pages(runtime, scope_id, texts):
         pytest.fail("source flush did not drain")
 
 
+def test_cropped_spread_keeps_only_text_from_the_visible_page():
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
+
+    writer = pypdf.PdfWriter()
+    page = writer.add_blank_page(width=200, height=100)
+    page.cropbox.lower_left = (25, 0)
+    page.cropbox.upper_right = (175, 100)
+    name = NameObject
+    font = DictionaryObject({name("/Subtype"): name("/Type1"), name("/BaseFont"): name("/Helvetica")})
+    fonts = DictionaryObject({name("/F1"): font})
+    form = DecodedStreamObject()
+    form.set_data(b"BT /F1 12 Tf 30 50 Td (FORMTEXT) Tj ET")
+    form[name("/Subtype")] = name("/Form")
+    form[name("/BBox")] = ArrayObject(NumberObject(value) for value in (0, 0, 200, 100))
+    form[name("/Matrix")] = ArrayObject(NumberObject(value) for value in (1, 0, 0, 1, 10, 0))
+    form[name("/Resources")] = DictionaryObject({name("/Font"): fonts})
+    page[name("/Resources")] = DictionaryObject({
+        name("/Font"): fonts,
+        name("/XObject"): DictionaryObject({name("/Fm"): writer._add_object(form)}),
+    })
+    stream = DecodedStreamObject()
+    stream.set_data(
+        b"BT /F1 12 Tf 70 20 Td (VISIBLE) Tj ET "
+        b"BT /F1 12 Tf 182 60 Td [(OUTSIDE) -250 (RIGHT)] TJ ET "
+        b"BT /F1 12 Tf 18 80 Td (CROSSES) Tj ET "
+        b"q 1 0 0 1 -300 0 cm /Fm Do Q "
+        b"q 1 0 0 1 55 0 cm /Fm Do Q"
+    )
+    page[name("/Contents")] = stream
+    output = io.BytesIO()
+    writer.write(output)
+
+    pages = parse_pdf_document(PDFDocumentInput(document_id="cropped-spread", content=output.getvalue()))
+    assert pages[0].text.split() == ["VISIBLE", "CROSSES", "FORMTEXT"]
+
+
 def test_compensated_character_spacing_preserves_words_and_real_gaps():
     pypdf = pytest.importorskip("pypdf")
     from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject

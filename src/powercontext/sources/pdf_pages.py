@@ -282,6 +282,7 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
     from types import FunctionType, MethodType
 
     from pypdf import PageObject
+    from pypdf._text_extraction import mult
     from pypdf._text_extraction._text_extractor import TextExtraction
     from pypdf.generic import ArrayObject
     from typing_extensions import override
@@ -289,6 +290,11 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
     saved = []
     advances: list[float] = []
     active: list[PositionedExtraction | None] = []
+    outer_matrices: list[list[float] | None] = []
+    identity = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+    crop_left = max(float(page.cropbox.left), float(page.mediabox.left))
+    crop_right = min(float(page.cropbox.right), float(page.mediabox.right))
+    cropped = crop_left < crop_right and (crop_left > page.mediabox.left or crop_right < page.mediabox.right)
 
     class PositionedExtraction(TextExtraction):
         def __init__(self):
@@ -296,8 +302,28 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
             parent = active[-2] if len(active) > 1 else None
             self.character_spacing = parent.character_spacing if parent is not None else 0.0
             self.saved_character_spacing: list[float] = []
+            self.outer_matrix = outer_matrices[-1]
             active[-1] = self
             self._last_text_position: tuple[list[float], list[float], float] | None = None
+
+        def _outside_horizontal_crop(self, values):
+            if self.outer_matrix is None or self.font.sub_type not in ("Type1", "TrueType", "MMType1"):
+                return False
+            a, b, c, _, x, _ = mult(mult(self.tm_matrix, self.cm_matrix), self.outer_matrix)
+            scale = a * self.char_scale
+            if b or c or scale <= 0 or self.font_size <= 0 or crop_left <= x <= crop_right:
+                return False
+            units = self.font_size / 1000
+            length = sum(len(value) for value in values if isinstance(value, (str, bytes)))
+            widths = self.font.character_widths.values()
+            low, _, high, _ = self.font.font_descriptor.bbox
+            spacing = abs(self.character_spacing) + abs(self.space_scale - 1)
+            shifts = [-float(value) * units for value in values if isinstance(value, (int, float))]
+            # Use worst-case glyph advances and ink overhang. A run that
+            # might touch the crop is kept intact.
+            left = low * units + length * (min(0, min(widths)) * units - spacing) + sum(min(0, v) for v in shifts)
+            right = high * units + length * (max(0, max(widths)) * units + spacing) + sum(max(0, v) for v in shifts)
+            return x + right * scale < crop_left or x + left * scale > crop_right
 
         def _separate_rewound_word(self):
             if self._last_text_position is None:
@@ -344,30 +370,39 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
                 self._actual_str_size["str_widths"] -= self.font.space_width * self.font_size
 
     def before(operator, operands, _cm, _tm):
-        if operator != b"TJ" or not operands:
+        if not operands or (operator != b"TJ" and (not cropped or operator != b"Tj")):
             return
         extractor = active[-1]
         if extractor is None:
             raise ValueError("missing-pdf-text-extractor")
         original = operands[0]
+        if operator == b"Tj":
+            if extractor._outside_horizontal_crop(operands):
+                saved.append((operands, original))
+                operands[0] = ""
+            return
         advances.append(-sum(float(value) for value in original if isinstance(value, (int, float))))
         spacing = 1000 * extractor.character_spacing / extractor.font_size if extractor.font_size > 0 else 0.0
         threshold = extractor._space_width * 0.95
         # Backwards kerning cannot separate words. Forward adjustments can
         # also be cancelled by negative character spacing, in the same units.
         # Retain the raw advances for cursor accounting after extraction.
-        visible = [
-            value
-            for value in original
-            if not isinstance(value, (int, float))
-            or (value <= 0 and (spacing >= 0 or -value < threshold or -value + spacing >= threshold))
-        ]
+        visible = (
+            []
+            if extractor._outside_horizontal_crop(original)
+            else [
+                value
+                for value in original
+                if not isinstance(value, (int, float))
+                or (value <= 0 and (spacing >= 0 or -value < threshold or -value + spacing >= threshold))
+            ]
+        )
         if len(visible) != len(original):
             saved.append((operands, original))
             operands[0] = ArrayObject(visible)
 
     def after(operator, operands, _cm, _tm):
-        if operator == b"TJ" and saved and saved[-1][0] is operands:
+        if saved and saved[-1][0] is operands:
             _, original = saved.pop()
             operands[0] = original
         if operator == b"TJ" and operands:
@@ -389,12 +424,23 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
     )
     extract.__kwdefaults__ = base.__kwdefaults__
 
-    def invoke(self, *args, **kwargs):
+    def invoke(self, obj, *args, **kwargs):
+        outer = None
+        if cropped:
+            parent = active[-1] if active else None
+            if parent is None:
+                outer = identity
+            elif parent.outer_matrix is not None and parent.char_scale == parent.space_scale == 1.0:
+                form = obj.get("/Matrix", identity)
+                if isinstance(form, list) and len(form) == 6 and all(isinstance(v, (int, float)) for v in form):
+                    outer = mult(form, mult(parent.cm_matrix, parent.outer_matrix))
+        outer_matrices.append(outer)
         active.append(None)
         try:
-            return extract(self, *args, **kwargs)
+            return extract(self, obj, *args, **kwargs)
         finally:
             active.pop()
+            outer_matrices.pop()
 
     # Bind the loop to this reader-owned page. Nested Forms use the same
     # per-page factory; other pages and pypdf callers keep their own methods.
