@@ -624,23 +624,27 @@ def _statement_page(text: str, focus: tuple[str, ...]) -> bool:
     # Formal statement titles must remain recognizable anywhere on the page.
     headings = [line for line in text.splitlines()[1:] if line.strip()]
     for position in range(len(headings)):
-        # Wrapped prose can put an exact statement name on its own line.
-        # A preceding connective or title qualifier belongs to that sentence,
-        # rather than a separate formal heading.
+        # Wrapped prose and supplementary headings can put an exact statement
+        # name on its own line. Keep the preceding connective or qualifier.
         if position and re.search(
-            r"\b(?:the|a|an|of|in|on|to|for|and|or|our|its|their|consolidated|combined|condensed)\s*$",
+            r"\b(?:the|a|an|of|in|on|to|for|and|or|our|its|their|consolidated|combined|condensed|consolidating)\s*$"
+            r"|^\s*off[-\u2010-\u2015]?\s*$",
             headings[position - 1],
             re.IGNORECASE,
         ):
             continue
-        for width in (1, 2):
-            heading = " ".join(" ".join(headings[position : position + width]).casefold().split())
+        first = headings[position].strip().casefold()
+        formal = re.match(r"(?:consolidated|combined|condensed|statements?)\b", first)
+        # A short column label in a later footnote cannot start a formal title.
+        if position > 3 and not formal:
+            continue
+        # Some producers draw each word of a formal title on a separate line.
+        width = 6 if formal else 2
+        heading = ""
+        for line in headings[position : position + width]:
+            heading = f"{heading} {' '.join(line.casefold().split())}".lstrip()
             if len(heading.split()) > 12 or re.search(r"\.(?:\s*\.)+", heading):
-                continue
-            # A column labelled "Income Statement" in a later footnote is not a
-            # primary title. Formal statement titles can follow longer headers.
-            if position > 3 and not re.match(r"(?:consolidated|combined|condensed|statements?)\b", heading):
-                continue
+                break
             for kind in focus:
                 match = _STATEMENT_HEADINGS[kind].search(heading)
                 if match and re.fullmatch(

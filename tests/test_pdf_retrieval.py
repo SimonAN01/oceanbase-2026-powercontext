@@ -686,7 +686,14 @@ def test_answer_style_instructions_do_not_hide_separate_financial_statements():
 
 
 @pytest.mark.parametrize("statement_name", ["income statements", "P&L", "statements of operations"])
-@pytest.mark.parametrize("heading", ["Consolidated Statement of Income", "Statements of\nConsolidated Income"])
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "Consolidated Statement of Income",
+        "Statements of\nConsolidated Income",
+        "ACME\nGROUP\nAND\nSUBSIDIARIES\nCONSOLIDATED\nSTATEMENTS\nOF\nOPERATIONS",
+    ],
+)
 def test_an_explicit_statement_remains_retrievable_when_a_named_cost_is_absent(statement_name, heading):
     async def scenario():
         statement = f"ACME_2026\n{heading}\nNet sales 900. Operating income 300. Net income 200."
@@ -845,6 +852,29 @@ def test_a_note_caption_about_statement_locations_is_not_a_primary_statement_tit
                 memory,
                 "What restructuring costs are directly outlined in ACME's income statements for FY2026?",
                 limit=1,
+            )
+            assert (await memory.get(GetMemoryEntryRequest(citation=citations[0]))).entry.text == statement
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "note_heading",
+    ["Off\nBalance\nSheet\nArrangements", "Condensed\nConsolidating\nBalance\nSheet\nInformation"],
+)
+def test_fragmented_note_headings_do_not_replace_a_primary_balance_sheet(note_heading):
+    async def scenario():
+        statement = "ACME_2026\nConsolidated Balance Sheets\nAssets 100. Liabilities 40."
+        note = f"ACME_2026\n{note_heading}\nACME's FY2026 audited balance sheet guarantees and collateral."
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Financial statements", summary="Primary balance sheet", idempotency_key="balance")
+            )
+            memory = runtime.memory.for_scope(scope.scope_id)
+            await _store_pages(runtime, scope.scope_id, (statement, note))
+            citations = await search_pdf_pages(
+                memory, "What guarantees and collateral appear on ACME's audited FY2026 balance sheet?", limit=1
             )
             assert (await memory.get(GetMemoryEntryRequest(citation=citations[0]))).entry.text == statement
 
