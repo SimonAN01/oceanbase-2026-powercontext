@@ -366,7 +366,7 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
     from pypdf import PageObject
     from pypdf._text_extraction import mult
     from pypdf._text_extraction._text_extractor import TextExtraction
-    from pypdf.generic import ArrayObject, NameObject
+    from pypdf.generic import ArrayObject, DictionaryObject, NameObject
     from typing_extensions import override
 
     saved = []
@@ -383,6 +383,16 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
             super().__init__()
             parent = active[-2] if len(active) > 1 else None
             self.character_spacing = parent.character_spacing if parent is not None else 0.0
+            if parent is not None:
+                # A Form starts with its caller's text state. A local Tf can
+                # override the selected font without changing the caller.
+                self.font_resource = parent.font_resource
+                self.font = parent.font
+                self.font_size = parent.font_size
+                self._space_width = parent._space_width
+                self.char_scale = parent.char_scale
+                self.space_scale = parent.space_scale
+                self.TL = parent.TL
             self.saved_character_spacing: list[float] = []
             self.outer_matrix = outer_matrices[-1]
             active[-1] = self
@@ -498,6 +508,15 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
 
     base = PageObject._extract_text
 
+    def extraction_resources(obj):
+        resources = base.__globals__["_get_page_resources"](obj)
+        parent = active[-2] if len(active) > 1 else None
+        if not resources and parent is not None and parent.font_resource is not None:
+            # pypdf skips a resource-free stream before reading operators.
+            # An inherited font is sufficient to show text without a local Tf.
+            return DictionaryObject({NameObject("/Font"): DictionaryObject()})
+        return resources
+
     def extraction_warning(message, *, exception: Exception | None = None, **params):
         # pypdf logs and suppresses exceptions from invoked XObjects. A
         # successful result must not silently omit part of the physical page.
@@ -507,7 +526,12 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
 
     extract = FunctionType(
         base.__code__,
-        {**base.__globals__, "TextExtraction": PositionedExtraction, "logger_warning": extraction_warning},
+        {
+            **base.__globals__,
+            "TextExtraction": PositionedExtraction,
+            "_get_page_resources": extraction_resources,
+            "logger_warning": extraction_warning,
+        },
         base.__name__,
         base.__defaults__,
         base.__closure__,

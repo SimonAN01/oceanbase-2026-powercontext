@@ -111,6 +111,53 @@ def test_legacy_form_uses_the_resources_of_each_invoking_page():
     assert [page.text.strip() for page in pages] == ["A", "B"]
 
 
+@pytest.mark.parametrize("form_resources", ["legacy", "empty", "nested"])
+def test_pdf_form_inherits_the_selected_font(form_resources):
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
+
+    writer = pypdf.PdfWriter()
+    page = writer.add_blank_page(width=200, height=100)
+    name = NameObject
+    font = DictionaryObject({
+        name("/Type"): name("/Font"),
+        name("/Subtype"): name("/Type1"),
+        name("/BaseFont"): name("/Helvetica"),
+        name("/Encoding"): DictionaryObject({
+            name("/BaseEncoding"): name("/WinAnsiEncoding"),
+            name("/Differences"): ArrayObject([NumberObject(65), name("/X"), name("/Y")]),
+        }),
+    })
+
+    def add_form(commands, resources):
+        form = DecodedStreamObject()
+        form[name("/Type")] = name("/XObject")
+        form[name("/Subtype")] = name("/Form")
+        form[name("/BBox")] = ArrayObject(NumberObject(value) for value in (0, 0, 200, 100))
+        if resources is not None:
+            form[name("/Resources")] = resources
+        form.set_data(commands)
+        return writer._add_object(form)
+
+    if form_resources == "legacy":
+        writer.pdf_header = "%PDF-1.1"
+    form = add_form(b"BT 40 60 Td (AB) Tj ET", None if form_resources == "legacy" else DictionaryObject())
+    if form_resources == "nested":
+        form = add_form(b"/Inner Do", DictionaryObject({name("/XObject"): DictionaryObject({name("/Inner"): form})}))
+    page[name("/Resources")] = DictionaryObject({
+        name("/Font"): DictionaryObject({name("/F1"): writer._add_object(font)}),
+        name("/XObject"): DictionaryObject({name("/Outer"): form}),
+    })
+    stream = DecodedStreamObject()
+    stream.set_data(b"BT /F1 12 Tf 10 80 Td (TOP) Tj ET /Outer Do BT 80 20 Td (AB) Tj ET")
+    page[name("/Contents")] = writer._add_object(stream)
+    output = io.BytesIO()
+    writer.write(output)
+
+    pages = parse_pdf_document(PDFDocumentInput(document_id="inherited-font", content=output.getvalue()))
+    assert pages[0].text.split() == ["TOP", "XY", "XY"]
+
+
 def test_cropped_spread_keeps_only_text_from_the_visible_page():
     pypdf = pytest.importorskip("pypdf")
     from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
