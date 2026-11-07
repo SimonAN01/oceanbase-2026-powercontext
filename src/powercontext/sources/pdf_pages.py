@@ -134,6 +134,51 @@ def _normalize_text_positions(stream: ContentStream) -> bool:
     return changed
 
 
+def _normalize_glyph_names(resources: DictionaryObject) -> DictionaryObject:
+    from pypdf._codecs import adobe_glyphs
+    from pypdf.generic import ArrayObject, DictionaryObject, NameObject
+
+    fonts_ref = resources.get("/Font")
+    fonts = fonts_ref.get_object() if fonts_ref is not None else None
+    if not isinstance(fonts, DictionaryObject):
+        return resources
+    replacements = DictionaryObject()
+    for name, ref in fonts.items():
+        font = ref.get_object()
+        if not isinstance(font, DictionaryObject) or "/Encoding" not in font:
+            continue
+        encoding = font["/Encoding"]
+        if not isinstance(encoding, DictionaryObject) or "/Differences" not in encoding:
+            continue
+        differences = encoding["/Differences"]
+        if not isinstance(differences, ArrayObject):
+            continue
+        # Adobe Glyph List treats the suffix as a visual variant.
+        changes = {
+            index: NameObject(base)
+            for index, glyph in enumerate(differences)
+            if isinstance(glyph, NameObject) and (base := glyph.partition(".")[0]) != glyph and base in adobe_glyphs
+        }
+        if not changes:
+            continue
+        names = ArrayObject(differences)
+        for index, glyph_name in changes.items():
+            names[index] = glyph_name
+        normalized_encoding = DictionaryObject(encoding)
+        normalized_encoding[NameObject("/Differences")] = names
+        normalized_font = DictionaryObject(font)
+        normalized_font[NameObject("/Encoding")] = normalized_encoding
+        replacements[name] = normalized_font
+
+    if not replacements:
+        return resources
+    normalized_fonts = DictionaryObject(fonts)
+    normalized_fonts.update(replacements)
+    normalized_resources = DictionaryObject(resources)
+    normalized_resources[NameObject("/Font")] = normalized_fonts
+    return normalized_resources
+
+
 def _restore_marked_glyphs(  # noqa: C901 - walk the PDF text and marked-content state together
     stream: ContentStream, resources: DictionaryObject
 ) -> DictionaryObject:
@@ -386,7 +431,9 @@ def _prepare_page_streams(page: PageObject) -> None:
             stream = ContentStream(_resolve_pdf_contents(contents), page.pdf, "bytes")
             resources = owner.get("/Resources")
             if resources is not None:
-                owner[NameObject("/Resources")] = _restore_marked_glyphs(stream, resources.get_object())
+                owner[NameObject("/Resources")] = _restore_marked_glyphs(
+                    stream, _normalize_glyph_names(resources.get_object())
+                )
             changed = _normalize_text_positions(stream)
             if is_page:
                 # Reuse the parsed operators even when their positions needed

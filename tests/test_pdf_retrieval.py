@@ -102,6 +102,37 @@ def test_pdf_rejects_a_missing_content_stream_in_a_later_page(array):
     ]
 
 
+@pytest.mark.parametrize("explicit_unicode", [False, True])
+def test_pdf_recovers_an_adobe_glyph_with_a_stylistic_suffix(explicit_unicode):
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
+
+    writer = pypdf.PdfWriter()
+    page = writer.add_blank_page(width=100, height=100)
+    name = NameObject
+    font = DictionaryObject({
+        name("/Subtype"): name("/Type1"),
+        name("/BaseFont"): name("/Helvetica"),
+        name("/Encoding"): DictionaryObject({name("/Differences"): ArrayObject([NumberObject(64), name("/a.swash")])}),
+    })
+    if explicit_unicode:
+        cmap = DecodedStreamObject()
+        cmap.set_data(
+            b"begincmap\n1 begincodespacerange <00> <FF> endcodespacerange\n"
+            b"1 beginbfchar <40> <005A> endbfchar\nendcmap"
+        )
+        font[name("/ToUnicode")] = cmap
+    page[name("/Resources")] = DictionaryObject({name("/Font"): DictionaryObject({name("/F1"): font})})
+    stream = DecodedStreamObject()
+    stream.set_data(b"BT /F1 12 Tf 10 10 Td (B@r) Tj ET")
+    page[name("/Contents")] = stream
+    output = io.BytesIO()
+    writer.write(output)
+
+    pages = parse_pdf_document(PDFDocumentInput(document_id="stylistic-glyph", content=output.getvalue()))
+    assert pages[0].text.strip() == ("BZr" if explicit_unicode else "Bar")
+
+
 def _tagged_glyph_pdf(*, mapping="0000", nested=False, conflicting=False):
     pypdf = pytest.importorskip("pypdf")
     from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
