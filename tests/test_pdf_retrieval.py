@@ -852,6 +852,57 @@ def test_comparative_figures_remain_available_when_the_requested_filing_is_absen
     asyncio.run(scenario())
 
 
+def test_fiscal_year_on_the_cover_distinguishes_opaque_filings_of_the_same_company():
+    async def scenario():
+        target_id, later_id = "d93ac471c2b6408a", "b74ce8f021a69d30"
+        covers = tuple(
+            f"{identity}\nFORM 10-K\nFor the fiscal year ended December 31, {year}\n"
+            "ACME, Inc.\n(Exact name of registrant as specified in its charter)"
+            for identity, year in ((target_id, 2026), (later_id, 2027))
+        )
+        target = f"{target_id}\nConsolidated Statement of Income\nNet income 42. Consolidated restructuring charges 15."
+        commentary = tuple(
+            f"{later_id}\nBusiness review section {number}\n"
+            "ACME reported restructuring charges and net income in its FY2026 income statement outlook."
+            for number in range(26)
+        )
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Opaque filings", summary="Fiscal year from the cover", idempotency_key="cover-year")
+            )
+            await _store_pages(runtime, scope.scope_id, (*covers, target, *commentary))
+            memory = runtime.memory.for_scope(scope.scope_id)
+            question = "Where are restructuring charges and net income outlined in ACME's FY2026 income statement?"
+            citations = await search_pdf_pages(memory, question, limit=20)
+            assert target in {
+                (await memory.get(GetMemoryEntryRequest(citation=citation))).entry.text for citation in citations
+            }
+
+    asyncio.run(scenario())
+
+
+def test_combined_cash_flow_and_total_assets_question_preserves_both_statements():
+    async def scenario():
+        cash = "ACME_2026\nConsolidated Statement of Cash Flows\nOperating activities 31."
+        balance = "ACME_2026\nConsolidated Balance Sheet\nTotal assets 84."
+        commentary = "ACME_2026\nManagement commentary\nTotal assets and cash flows from operating activities."
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Combined metrics", summary="Two financial statements", idempotency_key="assets-cash")
+            )
+            await _store_pages(runtime, scope.scope_id, (cash, balance, commentary))
+            memory = runtime.memory.for_scope(scope.scope_id)
+            question = "Where does ACME report total assets and cash flows from operating activities for FY2026?"
+            citations = await search_pdf_pages(memory, question, limit=2)
+            assert {cash, balance} == {
+                (await memory.get(GetMemoryEntryRequest(citation=citation))).entry.text for citation in citations
+            }
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("opaque", [False, True])
 def test_one_companys_matching_year_does_not_hide_another_companys_report(opaque):
     async def scenario():

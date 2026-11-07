@@ -769,6 +769,7 @@ PDF_PAGE_SOURCE_DEFINITION: SourceDefinition[PDFPageInput, PDFPageSource, PDFPag
 _WORDS = re.compile(r"[a-z]+|\d+")
 _REPORT_YEARS = re.compile(r"(?<![a-z0-9])(?:fy)?((?:19|20)\d{2})(?![a-z0-9])", re.IGNORECASE)
 _REGISTRANT_NAME = re.compile(r"^([^\n]+)\n\s*\(?exact name of (?:the )?registrant\b", re.IGNORECASE | re.MULTILINE)
+_FISCAL_YEAR_END = re.compile(r"\bfiscal\s+year\s+ended\s+[a-z]+\s+\d{1,2},?\s+((?:19|20)\d{2})\b", re.IGNORECASE)
 _FINANCIAL_EXPANSIONS = {
     "ebitda": "operating income depreciation amortization earnings interest taxes",
     "capex": "capital expenditures property plant equipment payments additions",
@@ -800,7 +801,7 @@ _STATEMENT_QUERIES = {
     "cash": re.compile(r"\bcash\s*flows?\b"),
     "balance": re.compile(
         r"\bbalance sheets?\b|\bstatements? of financial position\b|\breturn on (?:assets|equity)\b|\bro[ae]\b"
-        r"|\b(?:current|quick) ratio\b|\bworking capital\b"
+        r"|\b(?:current|quick) ratio\b|\bworking capital\b|\b(?:total|current) (?:assets|liabilities)\b"
     ),
 }
 _STATEMENT_SEARCH_TERMS = {"income": "income earnings", "cash": "cash flows", "balance": "assets liabilities"}
@@ -1001,6 +1002,40 @@ def _queries(question: str) -> tuple[str, str, tuple[str, ...]]:
     return primary, " ".join((*concepts, *phrases, *statement_terms)), queries
 
 
+async def _prefer_filing_covers(
+    memory: ScopedMemoryApplication,
+    literals: tuple[re.Pattern[str], ...],
+    inferred_documents: set[str],
+    requested_years: set[str],
+) -> set[str]:
+    from powercontext.builtin.runtime.models import SearchMemoryRequest
+
+    # Retrieve covers separately so frequent commentary cannot crowd them out.
+    covers = await memory.search(SearchMemoryRequest(query="exact name registrant", limit=200, mode="fts"))
+    registered_documents: dict[str, tuple[str, ...]] = {}
+    matching_year = set()
+    for hit in covers.hits:
+        identity, _, body = hit.text.partition("\n")
+        registrant = _REGISTRANT_NAME.search(body)
+        if registrant and any(literal.search(registrant[1]) for literal in literals):
+            registered_documents[identity] = tuple(_WORDS.findall(registrant[1].casefold()))
+            fiscal_year = _FISCAL_YEAR_END.search(body)
+            if fiscal_year and fiscal_year[1] in requested_years:
+                matching_year.add(identity)
+    if (
+        len(requested_years) == 1
+        and matching_year
+        and len(registered_documents) > 1
+        and len(set(registered_documents.values())) == 1
+        and inferred_documents.issubset(registered_documents)
+    ):
+        # Another year's filing may mention the requested year more often.
+        return matching_year
+    if len(inferred_documents) > 1 and registered_documents:
+        return set(registered_documents)
+    return inferred_documents
+
+
 async def _search_document_mentions(
     memory: ScopedMemoryApplication, question: str, limit: int
 ) -> tuple[tuple[MemoryHit, ...], frozenset[str]]:
@@ -1045,6 +1080,7 @@ async def _search_document_mentions(
     literals = {
         mention: re.compile(r"(?<!\w)" + re.escape(mention) + r"(?!\w)", re.IGNORECASE) for mention in sorted(mentions)
     }
+    shared_mention = False
     for mention, literal in literals.items():
         page = await memory.search(
             SearchMemoryRequest(query=analyze_fts_query(mention), limit=max(200, limit * 10), mode="fts")
@@ -1056,24 +1092,17 @@ async def _search_document_mentions(
             if literal.search(body):
                 texts.setdefault(identity, set()).add(body)
         counts = sorted(((len(values), identity) for identity, values in texts.items()), reverse=True)
+        shared_mention |= len(counts) > 1
         # A reference in another report must not become its identity. Count
         # distinct page texts, rather than duplicate Memory entries, and
         # retain ordinary topic ranking when the association is ambiguous.
         if counts and counts[0][0] >= max(2, 2 * counts[1][0] if len(counts) > 1 else 2):
             inferred_documents.add(counts[0][1])
-    if len(inferred_documents) > 1:
-        # A common issuer name can fill its FTS pool with commentary. Query
-        # the filing label separately to find covers and disambiguate names
-        # that recur in the discussion, such as a geographic market.
-        covers = await memory.search(SearchMemoryRequest(query="exact name registrant", limit=200, mode="fts"))
-        registered_documents = set()
-        for hit in covers.hits:
-            identity, _, body = hit.text.partition("\n")
-            registrant = _REGISTRANT_NAME.search(body)
-            if registrant and any(literal.search(registrant[1]) for literal in literals.values()):
-                registered_documents.add(identity)
-        if registered_documents:
-            inferred_documents = registered_documents
+    requested_years = set(_REPORT_YEARS.findall(question_text))
+    if len(inferred_documents) > 1 or (len(requested_years) == 1 and shared_mention):
+        inferred_documents = await _prefer_filing_covers(
+            memory, tuple(literals.values()), inferred_documents, requested_years
+        )
     return tuple(hits.values()), frozenset(inferred_documents)
 
 
