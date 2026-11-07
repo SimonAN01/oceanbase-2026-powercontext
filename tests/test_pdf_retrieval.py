@@ -75,6 +75,42 @@ async def _store_pages(runtime, scope_id, texts):
         pytest.fail("source flush did not drain")
 
 
+def test_legacy_form_uses_the_resources_of_each_invoking_page():
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
+
+    writer = pypdf.PdfWriter()
+    name = NameObject
+    form = DecodedStreamObject()
+    form.set_data(b"BT /F1 12 Tf 20 50 Td (A) Tj ET")
+    form[name("/Subtype")] = name("/Form")
+    form[name("/BBox")] = ArrayObject(NumberObject(value) for value in (0, 0, 100, 100))
+    form_ref = writer._add_object(form)
+
+    for glyph in ("/A", "/B"):
+        page = writer.add_blank_page(width=100, height=100)
+        font = DictionaryObject({
+            name("/Subtype"): name("/Type1"),
+            name("/BaseFont"): name("/Helvetica"),
+            name("/Encoding"): DictionaryObject({
+                name("/Differences"): ArrayObject([NumberObject(65), name(glyph)]),
+            }),
+        })
+        page[name("/Resources")] = DictionaryObject({
+            name("/Font"): DictionaryObject({name("/F1"): font}),
+            name("/XObject"): DictionaryObject({name("/Fm"): form_ref}),
+        })
+        stream = DecodedStreamObject()
+        stream.set_data(b"/Fm Do")
+        page[name("/Contents")] = stream
+
+    output = io.BytesIO()
+    writer.pdf_header = "%PDF-1.1"
+    writer.write(output)
+    pages = parse_pdf_document(PDFDocumentInput(document_id="legacy-form", content=output.getvalue()))
+    assert [page.text.strip() for page in pages] == ["A", "B"]
+
+
 def test_cropped_spread_keeps_only_text_from_the_visible_page():
     pypdf = pytest.importorskip("pypdf")
     from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject

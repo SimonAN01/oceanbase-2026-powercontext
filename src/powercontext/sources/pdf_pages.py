@@ -284,7 +284,7 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
     from pypdf import PageObject
     from pypdf._text_extraction import mult
     from pypdf._text_extraction._text_extractor import TextExtraction
-    from pypdf.generic import ArrayObject
+    from pypdf.generic import ArrayObject, NameObject
     from typing_extensions import override
 
     saved = []
@@ -425,6 +425,9 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
     extract.__kwdefaults__ = base.__kwdefaults__
 
     def invoke(self, obj, *args, **kwargs):
+        # Legacy forms without a resource dictionary use the invoking page's
+        # resources. The same indirect form may be drawn on several pages.
+        resources = page.get("/Resources") if active and "/Resources" not in obj else None
         outer = None
         if cropped:
             parent = active[-1] if active else None
@@ -437,10 +440,14 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
         outer_matrices.append(outer)
         active.append(None)
         try:
+            if resources is not None:
+                obj[NameObject("/Resources")] = resources
             return extract(self, obj, *args, **kwargs)
         finally:
             active.pop()
             outer_matrices.pop()
+            if resources is not None:
+                obj.pop("/Resources", None)
 
     # Bind the loop to this reader-owned page. Nested Forms use the same
     # per-page factory; other pages and pypdf callers keep their own methods.
