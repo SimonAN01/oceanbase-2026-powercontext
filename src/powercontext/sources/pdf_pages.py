@@ -522,6 +522,9 @@ def parse_pdf_document(value: PDFDocumentInput) -> tuple[PDFPageInput, ...]:
     _validate_document_id(value.document_id)
     if not value.content or b"%PDF-" not in value.content[:1024]:
         raise ValueError("invalid-pdf-document")
+    # pypdf can recover pages even when the final EOF marker is incomplete.
+    if not value.content.rstrip(b"\x00\t\n\f\r ").endswith((b"\n%%EOF", b"\r%%EOF")):
+        raise ValueError("unreadable-pdf-document")
     digest = hashlib.sha256(value.content).hexdigest()
     try:
         reader = PdfReader(io.BytesIO(value.content))

@@ -75,6 +75,24 @@ async def _store_pages(runtime, scope_id, texts):
         pytest.fail("source flush did not drain")
 
 
+def test_pdf_rejects_a_truncated_end_of_file_marker():
+    pypdf = pytest.importorskip("pypdf")
+    writer = pypdf.PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    writer.add_blank_page(width=100, height=100)
+    output = io.BytesIO()
+    writer.write(output)
+    raw = output.getvalue().rstrip()
+
+    complete = PDFDocumentInput(document_id="complete", content=raw + b"\r\n ")
+    assert [page.page_number for page in parse_pdf_document(complete)] == [1, 2]
+
+    for missing_bytes in (1, 2, 3):
+        truncated = PDFDocumentInput(document_id="truncated", content=raw[:-missing_bytes])
+        with pytest.raises(ValueError):
+            parse_pdf_document(truncated)
+
+
 @pytest.mark.parametrize("array", [False, True])
 def test_pdf_rejects_a_missing_content_stream_in_a_later_page(array):
     pypdf = pytest.importorskip("pypdf")
