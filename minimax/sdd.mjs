@@ -119,7 +119,7 @@ async function generate() {
   const keyName = useModelScope ? "MODELSCOPE_API_KEY" : "MINIMAX_API_KEY";
   const key = process.env[keyName];
   if (!key) throw new Error(`${keyName} is required for a new MiniMax generation.`);
-  const model = process.env.MINIMAX_MODEL || (useModelScope ? "MiniMax/MiniMax-M3" : "MiniMax-M3");
+  const model = process.env.MINIMAX_MODEL || (useModelScope ? "MiniMax/MiniMax-M1-80k" : "MiniMax-M3");
   const host = useModelScope ? "https://api-inference.modelscope.cn"
     : process.env.MINIMAX_REGION === "international" ? "https://api.minimax.io" : "https://api.minimax.cn";
   const endpoint = useModelScope ? "/v1/chat/completions" : "/anthropic/v1/messages";

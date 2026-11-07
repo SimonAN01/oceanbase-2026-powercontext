@@ -7,7 +7,7 @@
 - Node.js 22.12+，seekdb-js 1.4.0。执行 `npm ci`。首次使用嵌入式 seekdb 会下载原生库。
 - PowerContext 官方服务。项目使用默认 SQLite，相关操作为创建 scope、记忆写入和记忆列表。可按 [HTTP 快速开始](https://powercontext.oceanbase.io/zh/docs/develop/api-quickstart/) 安装，并为本例启动独立实例。
 - 配置已授权的 MiniMax 竞赛凭证到 `MINIMAX_API_KEY` 环境变量。默认使用中国站 `MiniMax-M3`。国际站设置 `MINIMAX_REGION=international`，可用模型由 `MINIMAX_MODEL` 指定。
-- 也可以通过魔搭 API-Inference 调用 MiniMax。设置 `SDD_MODEL_PROVIDER=modelscope` 和 `MODELSCOPE_API_KEY`，默认模型为 `MiniMax/MiniMax-M3`。访问令牌可在 [魔搭账户设置](https://modelscope.cn/my/myaccesstoken) 获取。
+- 也可以通过魔搭 API-Inference 调用 MiniMax。设置 `SDD_MODEL_PROVIDER=modelscope` 和 `MODELSCOPE_API_KEY`，默认模型为 `MiniMax/MiniMax-M1-80k`。访问令牌可在 [魔搭账户设置](https://modelscope.cn/my/myaccesstoken) 获取。若推理接口提示邮箱验证，可在 [账号设置](https://modelscope.cn/my/settings/account) 完成。
 
 在本目录启动 PowerContext：
 
