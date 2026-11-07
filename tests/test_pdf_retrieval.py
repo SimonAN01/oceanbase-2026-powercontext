@@ -74,6 +74,34 @@ async def _store_pages(runtime, scope_id, texts):
         pytest.fail("source flush did not drain")
 
 
+@pytest.mark.parametrize("array", [False, True])
+def test_pdf_rejects_a_missing_content_stream_in_a_later_page(array):
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import ArrayObject, DecodedStreamObject, IndirectObject, NameObject, NullObject
+
+    writer = pypdf.PdfWriter()
+    blank = writer.add_blank_page(width=100, height=100)
+    blank[NameObject("/Contents")] = NullObject()
+    page = writer.add_blank_page(width=100, height=100)
+    existing = DecodedStreamObject()
+    existing.set_data(b"q Q")
+    missing = IndirectObject(999, 0, writer)
+    page[NameObject("/Contents")] = ArrayObject([writer._add_object(existing), missing]) if array else missing
+    output = io.BytesIO()
+    writer.write(output)
+
+    with pytest.raises(ValueError, match="unreadable-pdf-document"):
+        parse_pdf_document(PDFDocumentInput(document_id="broken-stream", content=output.getvalue()))
+
+    page[NameObject("/Contents")] = NullObject()
+    valid = io.BytesIO()
+    writer.write(valid)
+    assert [p.text for p in parse_pdf_document(PDFDocumentInput(document_id="blank", content=valid.getvalue()))] == [
+        "",
+        "",
+    ]
+
+
 def _tagged_glyph_pdf(*, mapping="0000", nested=False, conflicting=False):
     pypdf = pytest.importorskip("pypdf")
     from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject

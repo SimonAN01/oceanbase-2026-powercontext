@@ -351,6 +351,22 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
             page._extract_text = previous
 
 
+def _resolve_pdf_contents(contents):
+    from pypdf.generic import ArrayObject, NullObject, StreamObject
+
+    resolved = contents.get_object()
+    if isinstance(resolved, NullObject):
+        return None
+    if isinstance(resolved, ArrayObject):
+        streams = [item.get_object() for item in resolved]
+        if all(isinstance(stream, (StreamObject, NullObject)) for stream in streams):
+            return ArrayObject(streams)
+    elif isinstance(resolved, StreamObject):
+        return resolved
+    # pypdf can skip missing references in an array and return partial text.
+    raise ValueError("invalid-pdf-content-stream")
+
+
 def _prepare_page_streams(page: PageObject) -> None:
     from pypdf import PageObject
     from pypdf.generic import ContentStream, DecodedStreamObject, NameObject
@@ -367,7 +383,7 @@ def _prepare_page_streams(page: PageObject) -> None:
         if contents is not None:
             # Keep encoded glyph bytes: decoded PDF strings would bypass the
             # font's character map when pypdf reads this ContentStream again.
-            stream = ContentStream(contents, page.pdf, "bytes")
+            stream = ContentStream(_resolve_pdf_contents(contents), page.pdf, "bytes")
             resources = owner.get("/Resources")
             if resources is not None:
                 owner[NameObject("/Resources")] = _restore_marked_glyphs(stream, resources.get_object())
