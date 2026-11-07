@@ -1,0 +1,18 @@
+{
+  "name": "sdd-review-queue",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "start": "node sdd.mjs",
+    "test": "node --test sample/test/baseline.test.mjs"
+  },
+  "dependencies": {
+    "seekdb": "1.4.0"
+  },
+  "overrides": {
+    "adm-zip": "0.6.1"
+  }
+}
