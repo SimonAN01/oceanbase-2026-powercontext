@@ -288,11 +288,14 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
 
     saved = []
     advances: list[float] = []
-    active: list[TextExtraction | None] = []
+    active: list[PositionedExtraction | None] = []
 
     class PositionedExtraction(TextExtraction):
         def __init__(self):
             super().__init__()
+            parent = active[-2] if len(active) > 1 else None
+            self.character_spacing = parent.character_spacing if parent is not None else 0.0
+            self.saved_character_spacing: list[float] = []
             active[-1] = self
             self._last_text_position: tuple[list[float], list[float], float] | None = None
 
@@ -321,6 +324,12 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
 
         @override
         def process_operation(self, operator, operands):
+            if operator == b"Tc" and operands:
+                self.character_spacing = float(operands[0])
+            elif operator == b"q":
+                self.saved_character_spacing.append(self.character_spacing)
+            elif operator == b"Q" and self.saved_character_spacing:
+                self.character_spacing = self.saved_character_spacing.pop()
             # pypdf inserts a plain Python string for a numeric TJ gap. Its
             # visible separator is useful, but its font width must not count
             # again: the actual numeric advance is accounted for below.
@@ -335,21 +344,27 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
                 self._actual_str_size["str_widths"] -= self.font.space_width * self.font_size
 
     def before(operator, operands, _cm, _tm):
-        if operator == b"TJ" and operands:
-            advances.append(-sum(float(value) for value in operands[0] if isinstance(value, (int, float))))
-        if (
-            operator == b"TJ"
-            and operands
-            and any(isinstance(value, (int, float)) and value > 0 for value in operands[0])
-        ):
-            # Positive TJ adjustments move the next glyph backwards. They
-            # tighten letters, whereas pypdf's absolute-value gap heuristic
-            # treats them as spaces. Mask only that heuristic while extracting;
-            # restore the original operands after each operation.
-            saved.append((operands, operands[0]))
-            operands[0] = ArrayObject(
-                value for value in operands[0] if not isinstance(value, (int, float)) or value <= 0
-            )
+        if operator != b"TJ" or not operands:
+            return
+        extractor = active[-1]
+        if extractor is None:
+            raise ValueError("missing-pdf-text-extractor")
+        original = operands[0]
+        advances.append(-sum(float(value) for value in original if isinstance(value, (int, float))))
+        spacing = 1000 * extractor.character_spacing / extractor.font_size if extractor.font_size > 0 else 0.0
+        threshold = extractor._space_width * 0.95
+        # Backwards kerning cannot separate words. Forward adjustments can
+        # also be cancelled by negative character spacing, in the same units.
+        # Retain the raw advances for cursor accounting after extraction.
+        visible = [
+            value
+            for value in original
+            if not isinstance(value, (int, float))
+            or (value <= 0 and (spacing >= 0 or -value < threshold or -value + spacing >= threshold))
+        ]
+        if len(visible) != len(original):
+            saved.append((operands, original))
+            operands[0] = ArrayObject(visible)
 
     def after(operator, operands, _cm, _tm):
         if operator == b"TJ" and saved and saved[-1][0] is operands:

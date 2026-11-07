@@ -75,6 +75,29 @@ async def _store_pages(runtime, scope_id, texts):
         pytest.fail("source flush did not drain")
 
 
+def test_compensated_character_spacing_preserves_words_and_real_gaps():
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    writer = pypdf.PdfWriter()
+    page = writer.add_blank_page(width=200, height=100)
+    name = NameObject
+    font = DictionaryObject({name("/Subtype"): name("/Type1"), name("/BaseFont"): name("/Helvetica")})
+    page[name("/Resources")] = DictionaryObject({name("/Font"): DictionaryObject({name("/F1"): font})})
+    stream = DecodedStreamObject()
+    stream.set_data(
+        b"q BT /F1 12 Tf 20 60 Td -4.8 Tc "
+        b"[(A) -400 (L) -400 (P) -400 (H) -400 (A) -840 (O) -400 (M) -400 (E) -400 (G) -400 (A)] TJ ET Q "
+        b"BT /F1 12 Tf 20 30 Td [(B) -400 (C)] TJ ET"
+    )
+    page[name("/Contents")] = stream
+    output = io.BytesIO()
+    writer.write(output)
+
+    pages = parse_pdf_document(PDFDocumentInput(document_id="compensated-spacing", content=output.getvalue()))
+    assert pages[0].text == "ALPHA OMEGA\nB C"
+
+
 def test_pdf_rejects_a_truncated_end_of_file_marker():
     pypdf = pytest.importorskip("pypdf")
     writer = pypdf.PdfWriter()
