@@ -351,7 +351,7 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
             page._extract_text = previous
 
 
-def _pdf_page_text(page: PageObject) -> str:
+def _prepare_page_streams(page: PageObject) -> None:
     from pypdf import PageObject
     from pypdf.generic import ContentStream, DecodedStreamObject, NameObject
 
@@ -396,17 +396,32 @@ def _pdf_page_text(page: PageObject) -> str:
         return owner
 
     normalize(page)
-    # These presentation-form ligatures represent ordinary Latin letter
-    # sequences. Expanding them preserves words for the specified ASCII tokens.
-    return _extract_page_text(page).translate({
-        0xFB00: "ff",
-        0xFB01: "fi",
-        0xFB02: "fl",
-        0xFB03: "ffi",
-        0xFB04: "ffl",
-        0xFB05: "st",
-        0xFB06: "st",
-    })
+
+
+def _pdf_page_text(page: PageObject) -> str:
+    from pypdf.generic import NameObject
+
+    original_contents = page.get("/Contents")
+    try:
+        _prepare_page_streams(page)
+        # These presentation-form ligatures represent ordinary Latin letter
+        # sequences. Expanding them preserves words for the specified ASCII tokens.
+        return _extract_page_text(page).translate({
+            0xFB00: "ff",
+            0xFB01: "fi",
+            0xFB02: "fl",
+            0xFB03: "ffi",
+            0xFB04: "ffl",
+            0xFB05: "st",
+            0xFB06: "st",
+        })
+    finally:
+        # Reader retains every PageObject. Keep parsed operators only for this
+        # extraction, rather than accumulating every page's arrays in memory.
+        if original_contents is None:
+            page.pop("/Contents", None)
+        else:
+            page[NameObject("/Contents")] = original_contents
 
 
 def parse_pdf_document(value: PDFDocumentInput) -> tuple[PDFPageInput, ...]:
