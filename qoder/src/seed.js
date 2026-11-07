@@ -9,6 +9,8 @@
  */
 
 import { SeekDB } from './seekdb.js';
+import { fork } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const seeds = [
   // === Comparable group 1: CIFAR-10, train/test 80/20, accuracy ===
@@ -110,7 +112,20 @@ async function main() {
   console.log(`\nSeeded ${count} records.`);
 }
 
-main().then(() => process.exit(0), (err) => {
-  console.error('Seed failed:', err);
-  process.exit(1);
-});
+if (process.send) {
+  main().then(() => process.send(true), (err) => {
+    console.error('Seed failed:', err);
+    process.send(false);
+  });
+} else {
+  // The native binding can keep its worker threads alive after the seed writes finish.
+  const child = fork(fileURLToPath(import.meta.url));
+  let succeeded = false;
+  child.once('message', (ok) => {
+    succeeded = ok === true;
+    child.kill();
+  });
+  child.once('exit', () => {
+    process.exitCode = succeeded ? 0 : 1;
+  });
+}
