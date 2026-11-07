@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { fork, spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { SeekdbClient } from "seekdb";
 
 const stagePrefix = "review-17 progress ";
@@ -102,32 +103,52 @@ async function context() {
     }
     return selected;
   });
-  return { task: "REVIEW-17", query, target, sources, latest };
+  const versions = sources.map(({ path, body }) => [path, hash(body)]).sort(([a], [b]) => a.localeCompare(b));
+  return { task: "REVIEW-17", query, target, sources, contextVersion: hash(JSON.stringify(versions)), latest };
 }
 
 async function generate() {
-  const key = process.env.MINIMAX_API_KEY;
-  if (!key) throw new Error("MINIMAX_API_KEY is required to run a real MiniMax generation.");
   const pack = await context();
   const previous = pack.latest;
-  if (previous?.stage === "verified") return { resumed: true, ...previous };
-  const model = process.env.MINIMAX_MODEL || "MiniMax-M3";
-  const host = process.env.MINIMAX_REGION === "international" ? "https://api.minimax.io" : "https://api.minimax.cn";
+  if (previous?.stage === "verified" && previous.contextVersion === pack.contextVersion) {
+    return { resumed: true, ...previous };
+  }
+  const provider = process.env.SDD_MODEL_PROVIDER || "minimax";
+  if (provider !== "minimax" && provider !== "modelscope") throw new Error("Choose minimax or modelscope.");
+  const useModelScope = provider === "modelscope";
+  const keyName = useModelScope ? "MODELSCOPE_API_KEY" : "MINIMAX_API_KEY";
+  const key = process.env[keyName];
+  if (!key) throw new Error(`${keyName} is required for a new MiniMax generation.`);
+  const model = process.env.MINIMAX_MODEL || (useModelScope ? "MiniMax/MiniMax-M3" : "MiniMax-M3");
+  const host = useModelScope ? "https://api-inference.modelscope.cn"
+    : process.env.MINIMAX_REGION === "international" ? "https://api.minimax.io" : "https://api.minimax.cn";
+  const endpoint = useModelScope ? "/v1/chat/completions" : "/anthropic/v1/messages";
+  const headers = useModelScope ? { Authorization: `Bearer ${key}` }
+    : { "x-api-key": key, "anthropic-version": "2023-06-01" };
+  const { citation: _citation, ...progress } = previous || {};
   const prompt = "Implement REVIEW-17 using this context. Only rewrite src/queue.mjs. Return its full JavaScript source, with no explanatory prose. " +
     "Use only standard JavaScript. Existing test and spec documents describe the requirements. Historical progress is context only.\n\n" +
-    JSON.stringify(pack);
-  const response = await post(host, "/anthropic/v1/messages", {
-    model, max_tokens: 4096, messages: [{ role: "user", content: prompt }],
-  }, { "x-api-key": key, "anthropic-version": "2023-06-01" });
-  const code = response.content?.filter((block) => block.type === "text").map((block) => block.text).join("\n").trim();
-  if (!code || response.stop_reason !== "end_turn") throw new Error("MiniMax did not return a completed source file.");
-  const source = code.replace(/^\x60{3}(?:javascript|js)?\s*\n([\s\S]*?)\n\x60{3}$/i, "$1") + "\n";
+    JSON.stringify({ ...pack, latest: previous ? progress : null });
+  const response = await post(host, endpoint, {
+    model, max_tokens: useModelScope ? 8192 : 4096, messages: [{ role: "user", content: prompt }],
+  }, headers);
+  const choice = response.choices?.[0];
+  const code = useModelScope ? choice?.message?.content
+    : response.content?.filter((block) => block.type === "text").map((block) => block.text).join("\n");
+  const complete = useModelScope ? choice?.finish_reason === "stop" : response.stop_reason === "end_turn";
+  if (!code?.trim() || !complete || !response.id || !/minimax/i.test(response.model || "")) {
+    throw new Error("The provider did not return completed source and a MiniMax response identifier.");
+  }
+  const source = code.trim().replace(/^\x60{3}(?:javascript|js)?\s*\n([\s\S]*?)\n\x60{3}$/i, "$1") + "\n";
   await writeFile(resolve(runRoot, "proposed-queue.mjs"), source);
   await writeFile(resolve(runRoot, "minimax-generation.json"), JSON.stringify({
-    model: response.model || model, requestId: response.id, usage: response.usage,
-    context: pack, sourceSha256: hash(source),
+    provider, endpoint: new URL(endpoint, host).href, requestedModel: model, model: response.model,
+    requestId: response.id, usage: response.usage, prompt, context: pack, sourceSha256: hash(source),
   }, null, 2) + "\n");
-  return remember("generated", { model, sourceSha256: hash(source), next: "review and verify proposed-queue.mjs" });
+  return remember("generated", {
+    model: response.model, contextVersion: pack.contextVersion,
+    sourceSha256: hash(source), next: "review and verify proposed-queue.mjs",
+  });
 }
 
 function tests(cwd, files) {
@@ -141,6 +162,12 @@ async function verify() {
   const proposal = await readFile(resolve(runRoot, "proposed-queue.mjs"), "utf8");
   const generation = JSON.parse(await readFile(resolve(runRoot, "minimax-generation.json"), "utf8"));
   if (generation.sourceSha256 !== hash(proposal)) throw new Error("Proposed source differs from the MiniMax output.");
+  const original = new Map(generation.context.sources.map(({ path, body }) => [path, body]));
+  for (const [, path] of records) {
+    if (original.has(path) && original.get(path) !== await readFile(new URL(path, root), "utf8")) {
+      throw new Error(`Source ${path} changed after generation. Reindex before generating again.`);
+    }
+  }
   const candidate = resolve(runRoot, "candidate");
   await mkdir(resolve(candidate, "src"), { recursive: true });
   await mkdir(resolve(candidate, "test"), { recursive: true });
@@ -152,7 +179,8 @@ async function verify() {
   await writeFile(resolve(runRoot, "verification.json"), JSON.stringify(after, null, 2) + "\n");
   if (after.code !== 0) process.exitCode = 1;
   return remember(after.code === 0 ? "verified" : "needs-fix", {
-    sourceSha256: hash(proposal), exitCode: after.code, next: after.code === 0 ? "review evidence and submit" : "inspect verification.json",
+    contextVersion: generation.context.contextVersion, sourceSha256: hash(proposal), exitCode: after.code,
+    next: after.code === 0 ? "review evidence and submit" : "inspect verification.json",
   });
 }
 
@@ -168,11 +196,29 @@ const commands = {
   },
 };
 
-try {
-  const command = process.argv[2];
-  if (!Object.hasOwn(commands, command)) throw new Error("Choose index, baseline, context, generate, verify, or status.");
-  console.log(JSON.stringify(await commands[command](), null, 2));
-} catch (error) {
-  console.error(error.message);
-  process.exitCode = 1;
+if (process.send) {
+  try {
+    const command = process.argv[2];
+    if (!Object.hasOwn(commands, command)) throw new Error("Choose index, baseline, context, generate, verify, or status.");
+    const result = await commands[command]();
+    process.send({ result, status: process.exitCode || 0 });
+  } catch (error) {
+    process.send({ error: error.message, status: 1 });
+  }
+} else {
+  // The embedded library can keep native threads alive after database work has finished.
+  const worker = fork(fileURLToPath(import.meta.url), process.argv.slice(2));
+  let replied = false;
+  worker.once("message", ({ result, error, status }) => {
+    replied = true;
+    if (error) console.error(error);
+    else console.log(JSON.stringify(result, null, 2));
+    process.exitCode = status;
+    worker.kill();
+  });
+  worker.once("exit", () => {
+    if (replied) return;
+    console.error("The SDD worker stopped before returning a result.");
+    process.exitCode = 1;
+  });
 }
