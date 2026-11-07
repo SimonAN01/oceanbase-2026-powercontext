@@ -1,0 +1,71 @@
+{
+  "provider": "modelscope",
+  "endpoint": "https://api-inference.modelscope.cn/v1/chat/completions",
+  "requestedModel": "MiniMax/MiniMax-M1-80k",
+  "model": "MiniMax/MiniMax-M1-80k",
+  "requestId": "073e63bf682fda4d53c5a53128b27dbe",
+  "usage": {
+    "total_tokens": 4731,
+    "total_characters": 0,
+    "prompt_tokens": 1415,
+    "completion_tokens": 3316,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  },
+  "prompt": "Implement REVIEW-17 using this context. Only rewrite src/queue.mjs. Return its full JavaScript source, with no explanatory prose. Use only standard JavaScript. Existing test and spec documents describe the requirements. Historical progress is context only.\n\n{\"task\":\"REVIEW-17\",\"query\":\"review queue due cutoff\",\"target\":\"src/queue.mjs\",\"sources\":[{\"category\":\"spec\",\"path\":\"spec/review-queue.md\",\"body\":\"# REVIEW-17 · Due review queue\\n\\nAdd an optional second argument `asOf` to `reviewQueue(cards)`, exported by `src/queue.mjs`.\\n\\n- With `asOf` omitted or `undefined`, include all active cards and preserve their input order.\\n- With a valid `asOf` date string, include only active cards with `dueOn <= asOf`, including cards due exactly on that date. Preserve the input order.\\n- Dates use valid Gregorian calendar days in exactly `YYYY-MM-DD` format, between years 0001 and 9999. Compare calendar days, regardless of timezone.\\n- A supplied invalid date cutoff throws `RangeError`, even when the deck is empty. With a cutoff, exclude active cards with missing or invalid `dueOn` dates.\\n- Do not mutate the input or its cards. Keep the returned array of card IDs.\\n\",\"score\":0.455717620699079},{\"category\":\"code\",\"path\":\"src/queue.mjs\",\"body\":\"/** Return the ids of active cards in the original review queue order. */\\nexport function reviewQueue(cards) {\\n  return cards.filter((card) => card.active).map((card) => card.id);\\n}\\n\",\"score\":0.344827586206897},{\"category\":\"test\",\"path\":\"test/baseline.test.mjs\",\"body\":\"import assert from \\\"node:assert/strict\\\";\\nimport { test } from \\\"node:test\\\";\\nimport { reviewQueue } from \\\"../src/queue.mjs\\\";\\n\\ntest(\\\"without a cutoff the review queue keeps all active cards in input order\\\", () => {\\n  const cards = [\\n    { id: \\\"later\\\", active: true, dueOn: \\\"2026-11-08\\\" },\\n    { id: \\\"retired\\\", active: false },\\n    { id: \\\"earlier\\\", active: true, dueOn: \\\"2026-11-01\\\" },\\n  ];\\n  assert.deepEqual(reviewQueue(cards), [\\\"later\\\", \\\"earlier\\\"]);\\n  assert.deepEqual(reviewQueue([]), []);\\n});\\n\",\"score\":0.35657890959203},{\"category\":\"test\",\"path\":\"test/due.test.mjs\",\"body\":\"import assert from \\\"node:assert/strict\\\";\\nimport { test } from \\\"node:test\\\";\\nimport { reviewQueue } from \\\"../src/queue.mjs\\\";\\n\\ntest(\\\"the due review cutoff includes the boundary and ignores retired and invalid cards\\\", () => {\\n  const cards = Object.freeze([\\n    Object.freeze({ id: \\\"boundary\\\", active: true, dueOn: \\\"2028-02-29\\\" }),\\n    Object.freeze({ id: \\\"future\\\", active: true, dueOn: \\\"2028-03-01\\\" }),\\n    Object.freeze({ id: \\\"overdue\\\", active: true, dueOn: \\\"2028-02-28\\\" }),\\n    Object.freeze({ id: \\\"invalid\\\", active: true, dueOn: \\\"2027-02-29\\\" }),\\n    Object.freeze({ id: \\\"missing\\\", active: true }),\\n    Object.freeze({ id: \\\"retired\\\", active: false, dueOn: \\\"2028-02-28\\\" }),\\n  ]);\\n  assert.deepEqual(reviewQueue(cards, \\\"2028-02-29\\\"), [\\\"boundary\\\", \\\"overdue\\\"]);\\n  assert.deepEqual(reviewQueue(cards, undefined), [\\\"boundary\\\", \\\"future\\\", \\\"overdue\\\", \\\"invalid\\\", \\\"missing\\\"]);\\n  assert.throws(() => reviewQueue([], \\\"2027-02-29\\\"), RangeError);\\n  assert.throws(() => reviewQueue([], \\\"0000-01-01\\\"), RangeError);\\n  assert.throws(() => reviewQueue([], \\\"2028-2-29\\\"), RangeError);\\n});\\n\",\"score\":0.228076232878499}],\"contextVersion\":\"4d44c03d1570fab1e514c0633ed26764a67031244af2ed0d5a30ef990960ba3e\",\"latest\":{\"stage\":\"baseline\",\"recordedAt\":\"2026-11-07T11:54:09.997Z\",\"regressions\":\"pass\",\"dueFeature\":\"missing\",\"next\":\"run the MiniMax generation\"}}",
+  "context": {
+    "task": "REVIEW-17",
+    "query": "review queue due cutoff",
+    "target": "src/queue.mjs",
+    "sources": [
+      {
+        "category": "spec",
+        "path": "spec/review-queue.md",
+        "body": "# REVIEW-17 · Due review queue\n\nAdd an optional second argument `asOf` to `reviewQueue(cards)`, exported by `src/queue.mjs`.\n\n- With `asOf` omitted or `undefined`, include all active cards and preserve their input order.\n- With a valid `asOf` date string, include only active cards with `dueOn <= asOf`, including cards due exactly on that date. Preserve the input order.\n- Dates use valid Gregorian calendar days in exactly `YYYY-MM-DD` format, between years 0001 and 9999. Compare calendar days, regardless of timezone.\n- A supplied invalid date cutoff throws `RangeError`, even when the deck is empty. With a cutoff, exclude active cards with missing or invalid `dueOn` dates.\n- Do not mutate the input or its cards. Keep the returned array of card IDs.\n",
+        "score": 0.455717620699079
+      },
+      {
+        "category": "code",
+        "path": "src/queue.mjs",
+        "body": "/** Return the ids of active cards in the original review queue order. */\nexport function reviewQueue(cards) {\n  return cards.filter((card) => card.active).map((card) => card.id);\n}\n",
+        "score": 0.344827586206897
+      },
+      {
+        "category": "test",
+        "path": "test/baseline.test.mjs",
+        "body": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { reviewQueue } from \"../src/queue.mjs\";\n\ntest(\"without a cutoff the review queue keeps all active cards in input order\", () => {\n  const cards = [\n    { id: \"later\", active: true, dueOn: \"2026-11-08\" },\n    { id: \"retired\", active: false },\n    { id: \"earlier\", active: true, dueOn: \"2026-11-01\" },\n  ];\n  assert.deepEqual(reviewQueue(cards), [\"later\", \"earlier\"]);\n  assert.deepEqual(reviewQueue([]), []);\n});\n",
+        "score": 0.35657890959203
+      },
+      {
+        "category": "test",
+        "path": "test/due.test.mjs",
+        "body": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { reviewQueue } from \"../src/queue.mjs\";\n\ntest(\"the due review cutoff includes the boundary and ignores retired and invalid cards\", () => {\n  const cards = Object.freeze([\n    Object.freeze({ id: \"boundary\", active: true, dueOn: \"2028-02-29\" }),\n    Object.freeze({ id: \"future\", active: true, dueOn: \"2028-03-01\" }),\n    Object.freeze({ id: \"overdue\", active: true, dueOn: \"2028-02-28\" }),\n    Object.freeze({ id: \"invalid\", active: true, dueOn: \"2027-02-29\" }),\n    Object.freeze({ id: \"missing\", active: true }),\n    Object.freeze({ id: \"retired\", active: false, dueOn: \"2028-02-28\" }),\n  ]);\n  assert.deepEqual(reviewQueue(cards, \"2028-02-29\"), [\"boundary\", \"overdue\"]);\n  assert.deepEqual(reviewQueue(cards, undefined), [\"boundary\", \"future\", \"overdue\", \"invalid\", \"missing\"]);\n  assert.throws(() => reviewQueue([], \"2027-02-29\"), RangeError);\n  assert.throws(() => reviewQueue([], \"0000-01-01\"), RangeError);\n  assert.throws(() => reviewQueue([], \"2028-2-29\"), RangeError);\n});\n",
+        "score": 0.228076232878499
+      }
+    ],
+    "contextVersion": "4d44c03d1570fab1e514c0633ed26764a67031244af2ed0d5a30ef990960ba3e",
+    "latest": {
+      "stage": "baseline",
+      "recordedAt": "2026-11-07T11:54:09.997Z",
+      "regressions": "pass",
+      "dueFeature": "missing",
+      "next": "run the MiniMax generation",
+      "citation": {
+        "memory_ref": {
+          "family": "memory",
+          "artifact_id": "memory",
+          "revision": 3
+        },
+        "entry_id": "mem_ent_a792f06292e84f0dbd45aae53be7618c",
+        "entry_version_id": "mem_ver_72b15563159749d09764455ff22597f7"
+      }
+    }
+  },
+  "sourceSha256": "87a6157a77caab7c11a8a1ed4b4dd6daf2d162d9f99b9ba7aafd0318d20128bf",
+  "providerContentSha256": "4c9e9911a5b8ba1728862b4ac297862c0e3163d356a0431948d73b8c99513291",
+  "normalization": "Discarded the leading provider reasoning envelope and outer Markdown code fence. The JavaScript is unchanged."
+}

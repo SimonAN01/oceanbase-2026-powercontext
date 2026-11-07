@@ -1,0 +1,150 @@
+{
+  "environment": {
+    "node": "v24.21.0",
+    "seekdb": "1.4.0",
+    "powercontext": "0.1.dev178+g0e0016a06.d20261028"
+  },
+  "before": {
+    "sourceSha256": "d9aef8fb98a2f1849dbd31b2a905aff17c0eca67ef9d85d55179f6a3c7b15102",
+    "runs": {
+      "result": {
+        "command": [
+          "node",
+          "--test",
+          "test/baseline.test.mjs"
+        ],
+        "code": 0,
+        "stdout": "✔ without a cutoff the review queue keeps all active cards in input order (0.981083ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 36.239333\n",
+        "stderr": ""
+      },
+      "red": {
+        "command": [
+          "node",
+          "--test",
+          "test/due.test.mjs"
+        ],
+        "code": 1,
+        "stdout": "✖ the due review cutoff includes the boundary and ignores retired and invalid cards (1.211166ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 33.763875\n\n✖ failing tests:\n\ntest at test/due.test.mjs:5:1\n✖ the due review cutoff includes the boundary and ignores retired and invalid cards (1.211166ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n  + actual - expected\n  \n    [\n      'boundary',\n  +   'future',\n      'overdue',\n  +   'invalid',\n  +   'missing'\n    ]\n  \n      at TestContext.<anonymous> (file://minimax/sample/test/due.test.mjs:14:10)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: [ 'boundary', 'future', 'overdue', 'invalid', 'missing' ],\n    expected: [ 'boundary', 'overdue' ],\n    operator: 'deepStrictEqual',\n    diff: 'simple'\n  }\n",
+        "stderr": ""
+      }
+    }
+  },
+  "after": {
+    "sourceSha256": "87a6157a77caab7c11a8a1ed4b4dd6daf2d162d9f99b9ba7aafd0318d20128bf",
+    "run": {
+      "command": [
+        "node",
+        "--test",
+        "test/baseline.test.mjs",
+        "test/due.test.mjs"
+      ],
+      "code": 0,
+      "stdout": "✔ without a cutoff the review queue keeps all active cards in input order (1.039ms)\n✔ the due review cutoff includes the boundary and ignores retired and invalid cards (1.232833ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 38.953209\n",
+      "stderr": ""
+    }
+  },
+  "testSha256": {
+    "test/baseline.test.mjs": "eb9c91fe3da23386942ee3478dd5116cd87c4b3acbd25094657bdaf84f7e4e01",
+    "test/due.test.mjs": "6b53ee2e726e0691fb7cfcf88e855b0de6814696ddba5406bc36b9694123deca"
+  },
+  "seekdbSpecReindex": {
+    "commands": [
+      "node sdd.mjs index",
+      "node sdd.mjs context",
+      "edit sample/spec/review-queue.md",
+      "node sdd.mjs index",
+      "node sdd.mjs context"
+    ],
+    "appendedSpecification": "The review queue keeps encounter order under the due cutoff.",
+    "query": "review queue due cutoff",
+    "beforeContextVersion": "4d44c03d1570fab1e514c0633ed26764a67031244af2ed0d5a30ef990960ba3e",
+    "afterContextVersion": "b1db8db19f9db18f589e5f40b6b44cdbcf48a399cba243645d27995025331751",
+    "sources": [
+      {
+        "path": "spec/review-queue.md",
+        "category": "spec",
+        "sha256": "873fb362c79c2e08ac8dcfc3057fa1c510f33a3362e35036c801406f84f2d3c3",
+        "score": 0.58728229006552
+      },
+      {
+        "path": "src/queue.mjs",
+        "category": "code",
+        "sha256": "d9aef8fb98a2f1849dbd31b2a905aff17c0eca67ef9d85d55179f6a3c7b15102",
+        "score": 0.344827586206897
+      },
+      {
+        "path": "test/baseline.test.mjs",
+        "category": "test",
+        "sha256": "eb9c91fe3da23386942ee3478dd5116cd87c4b3acbd25094657bdaf84f7e4e01",
+        "score": 0.35657890959203
+      },
+      {
+        "path": "test/due.test.mjs",
+        "category": "test",
+        "sha256": "6b53ee2e726e0691fb7cfcf88e855b0de6814696ddba5406bc36b9694123deca",
+        "score": 0.228076232878499
+      }
+    ]
+  },
+  "powercontext": {
+    "generated": {
+      "stage": "generated",
+      "recordedAt": "2026-11-07T14:08:47.862Z",
+      "model": "MiniMax/MiniMax-M1-80k",
+      "contextVersion": "4d44c03d1570fab1e514c0633ed26764a67031244af2ed0d5a30ef990960ba3e",
+      "sourceSha256": "4c9e9911a5b8ba1728862b4ac297862c0e3163d356a0431948d73b8c99513291",
+      "next": "review and verify proposed-queue.mjs",
+      "citation": {
+        "memory_ref": {
+          "family": "memory",
+          "artifact_id": "memory",
+          "revision": 5
+        },
+        "entry_id": "mem_ent_2962892553b64091b4828583b88208ea",
+        "entry_version_id": "mem_ver_aabef58107404b33b100ba442f18b5b1"
+      }
+    },
+    "verificationWrite": {
+      "stage": "verified",
+      "recordedAt": "2026-11-07T14:10:42.051Z",
+      "contextVersion": "4d44c03d1570fab1e514c0633ed26764a67031244af2ed0d5a30ef990960ba3e",
+      "sourceSha256": "87a6157a77caab7c11a8a1ed4b4dd6daf2d162d9f99b9ba7aafd0318d20128bf",
+      "exitCode": 0
+    },
+    "readInNewProcess": {
+      "stage": "verified",
+      "recordedAt": "2026-11-07T14:10:42.051Z",
+      "contextVersion": "4d44c03d1570fab1e514c0633ed26764a67031244af2ed0d5a30ef990960ba3e",
+      "sourceSha256": "87a6157a77caab7c11a8a1ed4b4dd6daf2d162d9f99b9ba7aafd0318d20128bf",
+      "exitCode": 0,
+      "next": "review evidence and submit",
+      "citation": {
+        "memory_ref": {
+          "family": "memory",
+          "artifact_id": "memory",
+          "revision": 5
+        },
+        "entry_id": "mem_ent_dcec0ae9f055462d9949eedb5fd6299c",
+        "entry_version_id": "mem_ver_ccca4aabd3154f5591eaef5644a4c040"
+      }
+    },
+    "reuseWithoutProviderCredentials": {
+      "resumed": true,
+      "stage": "verified",
+      "recordedAt": "2026-11-07T14:10:42.051Z",
+      "contextVersion": "4d44c03d1570fab1e514c0633ed26764a67031244af2ed0d5a30ef990960ba3e",
+      "sourceSha256": "87a6157a77caab7c11a8a1ed4b4dd6daf2d162d9f99b9ba7aafd0318d20128bf",
+      "exitCode": 0,
+      "next": "review evidence and submit",
+      "citation": {
+        "memory_ref": {
+          "family": "memory",
+          "artifact_id": "memory",
+          "revision": 5
+        },
+        "entry_id": "mem_ent_dcec0ae9f055462d9949eedb5fd6299c",
+        "entry_version_id": "mem_ver_ccca4aabd3154f5591eaef5644a4c040"
+      }
+    }
+  }
+}

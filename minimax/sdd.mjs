@@ -136,10 +136,12 @@ async function generate() {
   const code = useModelScope ? choice?.message?.content
     : response.content?.filter((block) => block.type === "text").map((block) => block.text).join("\n");
   const complete = useModelScope ? choice?.finish_reason === "stop" : response.stop_reason === "end_turn";
-  if (!code?.trim() || !complete || !response.id || !/minimax/i.test(response.model || "")) {
+  // Some ModelScope routes prefix the final answer with an inline reasoning block.
+  const answer = code?.replace(/^\s*<think>[\s\S]*?<\/think>/i, "").trim();
+  if (!answer || !complete || !response.id || !/minimax/i.test(response.model || "")) {
     throw new Error("The provider did not return completed source and a MiniMax response identifier.");
   }
-  const source = code.trim().replace(/^\x60{3}(?:javascript|js)?\s*\n([\s\S]*?)\n\x60{3}$/i, "$1") + "\n";
+  const source = answer.replace(/^\x60{3}(?:javascript|js)?\s*\n([\s\S]*?)\n\x60{3}$/i, "$1") + "\n";
   await writeFile(resolve(runRoot, "proposed-queue.mjs"), source);
   await writeFile(resolve(runRoot, "minimax-generation.json"), JSON.stringify({
     provider, endpoint: new URL(endpoint, host).href, requestedModel: model, model: response.model,
