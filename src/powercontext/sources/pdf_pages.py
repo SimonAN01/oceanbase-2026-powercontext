@@ -21,6 +21,7 @@ import io
 import json
 import math
 import re
+import zlib
 from collections import Counter
 from typing import TYPE_CHECKING, Literal, Self
 
@@ -34,7 +35,7 @@ from powercontext.sources.projections import TEXT_EVIDENCE_PROJECTION_KEY, TextE
 
 if TYPE_CHECKING:
     from pypdf import PageObject
-    from pypdf.generic import ContentStream, DictionaryObject
+    from pypdf.generic import ContentStream, DictionaryObject, StreamObject
 
     from powercontext.builtin.artifacts.memory.models import MemoryHit
     from powercontext.builtin.runtime.application import ScopedMemoryApplication
@@ -396,6 +397,27 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
             page._extract_text = previous
 
 
+def _validate_flate_eof(stream: StreamObject) -> None:
+    from pypdf import get_configuration
+    from pypdf.generic import ArrayObject, EncodedStreamObject
+
+    if not isinstance(stream, EncodedStreamObject) or "/Filter" not in stream:
+        return
+    filters = stream["/Filter"]
+    first = filters[0].get_object() if isinstance(filters, ArrayObject) and filters else filters
+    if first not in ("/FlateDecode", "/Fl"):
+        return
+    # pypdf's recovery decoder can return a partial prefix without a zlib EOF.
+    # Check the trailer before any page text is accepted, using its output limit.
+    decoder = zlib.decompressobj()
+    try:
+        decoder.decompress(stream._data, max_length=get_configuration().zlib_maximum_output_length)
+    except zlib.error as error:
+        raise ValueError("invalid-pdf-flate-stream") from error
+    if not decoder.eof:
+        raise ValueError("incomplete-pdf-flate-stream")
+
+
 def _resolve_pdf_contents(contents):
     from pypdf.generic import ArrayObject, NullObject, StreamObject
 
@@ -405,8 +427,12 @@ def _resolve_pdf_contents(contents):
     if isinstance(resolved, ArrayObject):
         streams = [item.get_object() for item in resolved]
         if all(isinstance(stream, (StreamObject, NullObject)) for stream in streams):
+            for stream in streams:
+                if isinstance(stream, StreamObject):
+                    _validate_flate_eof(stream)
             return ArrayObject(streams)
     elif isinstance(resolved, StreamObject):
+        _validate_flate_eof(resolved)
         return resolved
     # pypdf can skip missing references in an array and return partial text.
     raise ValueError("invalid-pdf-content-stream")

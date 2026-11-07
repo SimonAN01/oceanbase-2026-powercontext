@@ -16,6 +16,7 @@
 
 import asyncio
 import io
+import zlib
 
 import pytest
 
@@ -100,6 +101,33 @@ def test_pdf_rejects_a_missing_content_stream_in_a_later_page(array):
         "",
         "",
     ]
+
+
+@pytest.mark.parametrize("cut", [0, 4, 18])
+def test_pdf_rejects_incomplete_flate_content_in_a_later_page(cut):
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import DictionaryObject, EncodedStreamObject, NameObject
+
+    writer = pypdf.PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    page = writer.add_blank_page(width=100, height=100)
+    name = NameObject
+    font = DictionaryObject({name("/Subtype"): name("/Type1"), name("/BaseFont"): name("/Helvetica")})
+    page[name("/Resources")] = DictionaryObject({name("/Font"): DictionaryObject({name("/F1"): font})})
+    stream = EncodedStreamObject()
+    stream[name("/Filter")] = name("/FlateDecode")
+    compressed = zlib.compress(b"BT /F1 12 Tf 10 10 Td (ALPHA) Tj 0 30 Td (OMEGA) Tj ET")
+    stream._data = compressed[: len(compressed) - cut]
+    page[name("/Contents")] = stream
+    output = io.BytesIO()
+    writer.write(output)
+    document = PDFDocumentInput(document_id="flate-integrity", content=output.getvalue())
+
+    if cut:
+        with pytest.raises(ValueError, match="unreadable-pdf-document"):
+            parse_pdf_document(document)
+    else:
+        assert [page.text for page in parse_pdf_document(document)] == ["", "ALPHA\nOMEGA"]
 
 
 @pytest.mark.parametrize("explicit_unicode", [False, True])
