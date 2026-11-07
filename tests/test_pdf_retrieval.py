@@ -195,6 +195,34 @@ def test_cropped_spread_keeps_only_text_from_the_visible_page():
     assert pages[0].text.split() == ["VISIBLE", "CROSSES", "FORMTEXT"]
 
 
+def test_vertical_page_crop_respects_text_rise_and_boundary_overlap():
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    writer = pypdf.PdfWriter()
+    page = writer.add_blank_page(width=200, height=100)
+    page.cropbox.lower_left = (0, 25)
+    page.cropbox.upper_right = (200, 75)
+    name = NameObject
+    font = DictionaryObject({name("/Subtype"): name("/Type1"), name("/BaseFont"): name("/Helvetica")})
+    page[name("/Resources")] = DictionaryObject({name("/Font"): DictionaryObject({name("/F1"): font})})
+    stream = DecodedStreamObject()
+    stream.set_data(
+        b"BT /F1 12 Tf 70 52 Td (VISIBLE) Tj ET "
+        b"BT /F1 12 Tf 15 10 Td (BELOW) Tj ET "
+        b"BT /F1 12 Tf 15 92 Td [(ABOVE)] TJ ET "
+        b"q BT /F1 12 Tf 20 Ts 15 10 Td (RAISED) Tj ET Q "
+        b"BT /F1 12 Tf 15 10 Td (BELOWAGAIN) Tj ET "
+        b"BT /F1 12 Tf 15 76 Td (TOUCHES) Tj ET"
+    )
+    page[name("/Contents")] = stream
+    output = io.BytesIO()
+    writer.write(output)
+
+    pages = parse_pdf_document(PDFDocumentInput(document_id="vertical-crop", content=output.getvalue()))
+    assert pages[0].text.split() == ["VISIBLE", "RAISED", "TOUCHES"]
+
+
 def test_explicitly_reverse_positioned_latin_glyphs_keep_word_boundaries():
     pypdf = pytest.importorskip("pypdf")
     from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject

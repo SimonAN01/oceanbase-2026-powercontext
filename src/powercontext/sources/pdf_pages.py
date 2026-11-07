@@ -374,15 +374,19 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
     active: list[PositionedExtraction | None] = []
     outer_matrices: list[list[float] | None] = []
     identity = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
-    crop_left = max(float(page.cropbox.left), float(page.mediabox.left))
-    crop_right = min(float(page.cropbox.right), float(page.mediabox.right))
-    cropped = crop_left < crop_right and (crop_left > page.mediabox.left or crop_right < page.mediabox.right)
+    crop, media = page.cropbox, page.mediabox
+    crop_left, crop_right = max(float(crop.left), float(media.left)), min(float(crop.right), float(media.right))
+    crop_bottom, crop_top = max(float(crop.bottom), float(media.bottom)), min(float(crop.top), float(media.top))
+    horizontal_crop = crop_left < crop_right and (crop_left > media.left or crop_right < media.right)
+    vertical_crop = crop_bottom < crop_top and (crop_bottom > media.bottom or crop_top < media.top)
+    cropped = horizontal_crop or vertical_crop
 
     class PositionedExtraction(TextExtraction):
         def __init__(self):
             super().__init__()
             parent = active[-2] if len(active) > 1 else None
             self.character_spacing = parent.character_spacing if parent is not None else 0.0
+            self.text_rise = parent.text_rise if parent is not None else 0.0
             if parent is not None:
                 # A Form starts with its caller's text state. A local Tf can
                 # override the selected font without changing the caller.
@@ -393,28 +397,42 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
                 self.char_scale = parent.char_scale
                 self.space_scale = parent.space_scale
                 self.TL = parent.TL
-            self.saved_character_spacing: list[float] = []
+            self.saved_text_offsets: list[tuple[float, float]] = []
             self.outer_matrix = outer_matrices[-1]
             active[-1] = self
             self._last_text_position: tuple[list[float], list[float], float] | None = None
 
-        def _outside_horizontal_crop(self, values):
+        def _outside_crop(self, values):
             if self.outer_matrix is None or self.font.sub_type not in ("Type1", "TrueType", "MMType1"):
                 return False
-            a, b, c, _, x, _ = mult(mult(self.tm_matrix, self.cm_matrix), self.outer_matrix)
+            a, b, c, d, x, y = mult(mult(self.tm_matrix, self.cm_matrix), self.outer_matrix)
             scale = a * self.char_scale
-            if b or c or scale <= 0 or self.font_size <= 0 or crop_left <= x <= crop_right:
+            if b or c or scale <= 0 or self.font_size <= 0:
                 return False
             units = self.font_size / 1000
+            box = self.font.font_descriptor
+            left_bound, bottom_bound, right_bound, top_bound = box.bbox
+            # A font with fallback metrics does not establish a vertical ink
+            # bound. Keep it, and keep any run whose ink could cross the crop.
+            if vertical_crop and d > 0 and bottom_bound < top_bound and box.bbox != box._DEFAULT_BBOX:
+                bottom = y + d * (self.text_rise + bottom_bound * units)
+                top = y + d * (self.text_rise + top_bound * units)
+                if top < crop_bottom or bottom > crop_top:
+                    return True
+            if not horizontal_crop or crop_left <= x <= crop_right:
+                return False
             length = sum(len(value) for value in values if isinstance(value, (str, bytes)))
             widths = self.font.character_widths.values()
-            low, _, high, _ = self.font.font_descriptor.bbox
             spacing = abs(self.character_spacing) + abs(self.space_scale - 1)
             shifts = [-float(value) * units for value in values if isinstance(value, (int, float))]
             # Use worst-case glyph advances and ink overhang. A run that
             # might touch the crop is kept intact.
-            left = low * units + length * (min(0, min(widths)) * units - spacing) + sum(min(0, v) for v in shifts)
-            right = high * units + length * (max(0, max(widths)) * units + spacing) + sum(max(0, v) for v in shifts)
+            left = (
+                left_bound * units + length * (min(0, min(widths)) * units - spacing) + sum(min(0, v) for v in shifts)
+            )
+            right = (
+                right_bound * units + length * (max(0, max(widths)) * units + spacing) + sum(max(0, v) for v in shifts)
+            )
             return x + right * scale < crop_left or x + left * scale > crop_right
 
         def _separate_rewound_word(self):
@@ -444,10 +462,12 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
         def process_operation(self, operator, operands):
             if operator == b"Tc" and operands:
                 self.character_spacing = float(operands[0])
+            elif operator == b"Ts" and operands:
+                self.text_rise = float(operands[0])
             elif operator == b"q":
-                self.saved_character_spacing.append(self.character_spacing)
-            elif operator == b"Q" and self.saved_character_spacing:
-                self.character_spacing = self.saved_character_spacing.pop()
+                self.saved_text_offsets.append((self.character_spacing, self.text_rise))
+            elif operator == b"Q" and self.saved_text_offsets:
+                self.character_spacing, self.text_rise = self.saved_text_offsets.pop()
             # pypdf inserts a plain Python string for a numeric TJ gap. Its
             # visible separator is useful, but its font width must not count
             # again: the actual numeric advance is accounted for below.
@@ -469,7 +489,7 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
             raise ValueError("missing-pdf-text-extractor")
         original = operands[0]
         if operator == b"Tj":
-            if extractor._outside_horizontal_crop(operands):
+            if extractor._outside_crop(operands):
                 saved.append((operands, original))
                 operands[0] = ""
             return
@@ -481,7 +501,7 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
         # Retain the raw advances for cursor accounting after extraction.
         visible = (
             []
-            if extractor._outside_horizontal_crop(original)
+            if extractor._outside_crop(original)
             else [
                 value
                 for value in original
