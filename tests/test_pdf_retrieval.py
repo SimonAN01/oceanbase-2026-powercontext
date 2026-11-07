@@ -293,9 +293,19 @@ def test_pdf_rejects_a_missing_content_stream_in_a_later_page(array):
 
 
 @pytest.mark.parametrize("cut", [0, 4, 18])
-def test_pdf_rejects_incomplete_flate_content_in_a_later_page(cut):
+@pytest.mark.parametrize(
+    ("outer_filter", "parameter_storage"),
+    [
+        (None, None),
+        ("/ASCIIHexDecode", "array"),
+        ("/ASCIIHexDecode", "indirect"),
+        ("/ASCIIHexDecode", "null"),
+        ("/FlateDecode", None),
+    ],
+)
+def test_pdf_rejects_incomplete_flate_content_in_a_later_page(cut, outer_filter, parameter_storage):
     pypdf = pytest.importorskip("pypdf")
-    from pypdf.generic import DictionaryObject, EncodedStreamObject, NameObject
+    from pypdf.generic import ArrayObject, DictionaryObject, EncodedStreamObject, NameObject, NullObject
 
     writer = pypdf.PdfWriter()
     writer.add_blank_page(width=100, height=100)
@@ -304,9 +314,24 @@ def test_pdf_rejects_incomplete_flate_content_in_a_later_page(cut):
     font = DictionaryObject({name("/Subtype"): name("/Type1"), name("/BaseFont"): name("/Helvetica")})
     page[name("/Resources")] = DictionaryObject({name("/Font"): DictionaryObject({name("/F1"): font})})
     stream = EncodedStreamObject()
-    stream[name("/Filter")] = name("/FlateDecode")
     compressed = zlib.compress(b"BT /F1 12 Tf 10 10 Td (ALPHA) Tj 0 30 Td (OMEGA) Tj ET")
     stream._data = compressed[: len(compressed) - cut]
+    if outer_filter is None:
+        stream[name("/Filter")] = name("/FlateDecode")
+    else:
+        stream._data = (
+            stream._data.hex().encode("ascii") + b">"
+            if outer_filter == "/ASCIIHexDecode"
+            else zlib.compress(stream._data)
+        )
+        stream[name("/Filter")] = ArrayObject([name(outer_filter), name("/FlateDecode")])
+        parameters = ArrayObject([NullObject(), NullObject()])
+        if parameter_storage == "array":
+            stream[name("/DecodeParms")] = parameters
+        elif parameter_storage == "indirect":
+            stream[name("/DecodeParms")] = writer._add_object(parameters)
+        elif parameter_storage == "null":
+            stream[name("/DecodeParms")] = NullObject()
     page[name("/Contents")] = stream
     output = io.BytesIO()
     writer.write(output)

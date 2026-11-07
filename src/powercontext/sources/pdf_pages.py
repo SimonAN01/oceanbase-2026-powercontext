@@ -37,7 +37,7 @@ from powercontext.sources.projections import TEXT_EVIDENCE_PROJECTION_KEY, TextE
 
 if TYPE_CHECKING:
     from pypdf import PageObject
-    from pypdf.generic import ContentStream, DictionaryObject, StreamObject
+    from pypdf.generic import ContentStream, DictionaryObject, EncodedStreamObject, PdfObject, StreamObject
 
     from powercontext.builtin.artifacts.memory.models import MemoryHit
     from powercontext.builtin.runtime.application import ScopedMemoryApplication
@@ -579,25 +579,67 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
             page._extract_text = previous
 
 
-def _validate_flate_eof(stream: StreamObject) -> None:
+def _require_flate_eof(data: bytes) -> None:
     from pypdf import get_configuration
+
+    # pypdf's recovery decoder can return a partial prefix without a zlib EOF.
+    decoder = zlib.decompressobj()
+    try:
+        decoder.decompress(data, max_length=get_configuration().zlib_maximum_output_length)
+    except zlib.error as error:
+        raise ValueError("invalid-pdf-flate-stream") from error
+    if not decoder.eof:
+        raise ValueError("incomplete-pdf-flate-stream")
+
+
+def _validate_flate_chain(stream: EncodedStreamObject, chain: tuple[PdfObject | None, ...], last_flate: int) -> None:
+    from pypdf.filters import decode_stream_data
+    from pypdf.generic import ArrayObject, EncodedStreamObject, NameObject, NullObject
+
+    # pypdf pairs filters with parameters using zip. Give the reader-owned
+    # stream the resolved array, or omit an explicit null to use defaults.
+    parameters = stream.get("/DecodeParms")
+    parameters = parameters.get_object() if parameters is not None else None
+    if isinstance(parameters, ArrayObject) and len(parameters) == len(chain):
+        stream[NameObject("/DecodeParms")] = parameters
+    elif parameters is None or isinstance(parameters, NullObject):
+        stream.pop("/DecodeParms", None)
+        parameters = None
+    else:
+        raise ValueError("invalid-pdf-filter-parameters")
+
+    data = stream._data
+    # Decode the preceding filters in order with their own parameters.
+    stage = EncodedStreamObject()
+    stage.update(stream)
+    stage.pop("/DecodeParms", None)
+    for index, name in enumerate(chain[:last_flate]):
+        if not isinstance(name, NameObject):
+            raise TypeError("invalid-pdf-filter")
+        if name in ("/FlateDecode", "/Fl"):
+            _require_flate_eof(data)
+        stage[NameObject("/Filter")] = name
+        if isinstance(parameters, ArrayObject):
+            stage[NameObject("/DecodeParms")] = parameters[index]
+        stage._data = data
+        data = decode_stream_data(stage)
+    _require_flate_eof(data)
+
+
+def _validate_flate_eof(stream: StreamObject) -> None:
     from pypdf.generic import ArrayObject, EncodedStreamObject
 
     if not isinstance(stream, EncodedStreamObject) or "/Filter" not in stream:
         return
     filters = stream["/Filter"]
-    first = filters[0].get_object() if isinstance(filters, ArrayObject) and filters else filters
-    if first not in ("/FlateDecode", "/Fl"):
+    chain = tuple(item.get_object() for item in filters) if isinstance(filters, ArrayObject) else (filters,)
+    last_flate = max((index for index, name in enumerate(chain) if name in ("/FlateDecode", "/Fl")), default=-1)
+    if last_flate < 0:
         return
-    # pypdf's recovery decoder can return a partial prefix without a zlib EOF.
-    # Check the trailer before any page text is accepted, using its output limit.
-    decoder = zlib.decompressobj()
-    try:
-        decoder.decompress(stream._data, max_length=get_configuration().zlib_maximum_output_length)
-    except zlib.error as error:
-        raise ValueError("invalid-pdf-flate-stream") from error
-    if not decoder.eof:
-        raise ValueError("incomplete-pdf-flate-stream")
+    if len(chain) == 1:
+        _require_flate_eof(stream._data)
+    else:
+        _validate_flate_chain(stream, chain, last_flate)
 
 
 def _resolve_pdf_contents(contents):
