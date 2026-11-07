@@ -6,7 +6,7 @@ Dify 工作流收集档案号和行动，用模板节点生成 JSON，通过 HTT
 
 ## 导入 Dify
 
-使用 [Dify 1.19.0](https://github.com/langgenius/dify/tree/1.19.0) 的自托管 Docker Compose 部署和 Docker Compose v2.35 或更新版。后端镜像使用 Node.js 24 和 seekdb-js 1.4.0。构建和第一次启动需要访问 Docker Hub、npm 和 seekdb-js 的 GitHub Release 下载原生库。
+使用 [Dify 1.19.0](https://github.com/langgenius/dify/tree/1.19.0) 的自托管 Docker Compose 部署和 Docker Compose v2.35 或更新版。后端镜像使用 Node.js 24 和 seekdb-js 1.4.0。构建时需要访问 Docker Hub、Debian、npm 和 seekdb 原生组件下载站点。镜像包含 `libaio1` 和原生组件，启动时直接加载。
 
 1. 按 Dify 的 Docker README 准备 `docker/.env`，保留默认 Compose profiles 并生成部署要求的 sandbox token。新装的 Dify 在浏览器打开 `/install` 完成初始化。
 2. 在 Dify 的 `docker/` 目录运行以下命令。把环境变量值替换为本作品 `dify/` 目录的绝对路径。
@@ -16,6 +16,8 @@ Dify 工作流收集档案号和行动，用模板节点生成 JSON，通过 HTT
    docker compose -f docker-compose.yaml -f "$LUNAR_CASE_DIR/compose.game.yaml" up -d --build
    docker compose -f docker-compose.yaml -f "$LUNAR_CASE_DIR/compose.game.yaml" logs lunar-case-game
    ```
+
+   如果构建机通过代理访问下载站，在同一组 Compose 文件上先执行 `build --build-arg HTTPS_PROXY lunar-case-game`，再执行 `up -d`。
 
    游戏就绪时日志显示 `Lunar Lost & Found ready on port 4317`。Compose 只在内部网络提供游戏服务，Dify 的 SSRF 代理通过 `SSRF_PROXY_ALLOW_PRIVATE_DOMAINS` 允许访问 `lunar-case-game`。运行数据保存在 `lunar-case-data` 卷。默认服务地址是 `http://lunar-case-game:4317`。
 3. 在 Dify「工作室 → 导入 DSL 文件」选择 [lunar-case.yml](lunar-case.yml)。若使用单独部署的回合服务，在工作流变量中设置 `GAME_URL` 为 Dify 服务和其 SSRF 代理均可访问的 HTTP 地址。地址末尾省略斜杠。

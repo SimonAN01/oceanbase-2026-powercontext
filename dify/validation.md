@@ -43,4 +43,8 @@ for action, expected in [
 PY
 ```
 
-本记录覆盖同版工作流引擎与 seekdb 之间的端到端执行。Dify 工作室导入和 Docker 部署按 README 复验。
+## Dify 1.19.0 自托管复验
+
+在 Linux ARM64 的完整 Dify 1.19.0 Compose 环境中，通过工作室的导入接口载入原始 `lunar-case.yml`，再调用工作室草稿运行接口。保留 DSL 默认的内部 `GAME_URL`，由 Dify HTTP 节点和 SSRF 代理访问游戏容器。同一新档案的五次运行均以 `succeeded` 完成，分别核对了上表中的五段手记，包括误判计数和结案。
+
+修订后的游戏镜像以全新容器和数据卷在独立内部网络启动，`GET /health` 返回成功。镜像在构建阶段安装 `libaio1` 并下载 seekdb 原生库，启动时预载原生库，容器可在没有外部网络的情况下使用本地数据库。
