@@ -1,0 +1,38 @@
+:root { font-family: "PingFang SC", "Microsoft YaHei", sans-serif; color: #182439; background: #f5f8fc; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+.masthead { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 1rem max(5vw, 1rem); border-bottom: 1px solid #ced9e8; background: #fff; }
+.brand { color: inherit; font-weight: 700; text-decoration: none; }
+.brand span { margin-left: .5rem; color: #47617f; font-size: .72rem; letter-spacing: .12em; }
+#backend { color: #3c587c; font-size: .85rem; text-align: right; }
+main { max-width: 1120px; margin: 0 auto; padding: clamp(1rem, 5vw, 4rem); }
+.intro { padding: 1rem 0 1.5rem; border-bottom: 3px solid #244e7a; }
+.kicker { color: #244e7a; font-weight: 700; }
+h1 { margin: .15em 0; font-family: "Songti SC", Georgia, serif; font-size: clamp(2rem, 5vw, 3.75rem); }
+p { line-height: 1.6; }
+.workspace { display: grid; grid-template-columns: minmax(210px, 1fr) minmax(0, 3fr); gap: clamp(1.5rem, 4vw, 3.5rem); padding-top: 1.25rem; }
+aside { border-right: 1px solid #ced9e8; padding-right: clamp(.75rem, 2vw, 1.75rem); }
+form { display: grid; gap: .55rem; }
+label { font-weight: 600; font-size: .9rem; }
+input, button { min-height: 44px; font: inherit; border: 1px solid #8da2bb; border-radius: 4px; padding: .5rem .75rem; }
+input { width: 100%; background: #fff; color: #182439; }
+input[type="file"] { padding: .45rem; font-size: .85rem; }
+button { background: #244e7a; color: #fff; cursor: pointer; }
+button:hover { background: #1c4067; }
+button:disabled { opacity: .65; cursor: wait; }
+.secondary { background: transparent; color: #244e7a; }
+.secondary:hover { background: #e3edf7; }
+:focus-visible { outline: 3px solid #3769a3; outline-offset: 3px; }
+progress { width: 100%; margin-top: 1rem; accent-color: #244e7a; }
+.searchline { display: flex; gap: .55rem; }
+.searchline button { flex: 0 0 auto; }
+[role="status"] { color: #445975; font-size: .88rem; }
+#results { padding-left: 1.6rem; }
+#results li { border-top: 1px solid #ced9e8; padding: .75rem 0; }
+#results h3 { font-size: .95rem; margin: 0 0 .35rem; overflow-wrap: anywhere; }
+#results p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 690px) {
+  .workspace { grid-template-columns: minmax(0, 1fr); }
+  aside { border-right: 0; border-bottom: 1px solid #ced9e8; padding: 0 0 .75rem; }
+  .brand span { display: none; }
+}

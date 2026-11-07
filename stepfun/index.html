@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>页索引 · 本地知识库</title>
+  <script type="module" src="/src/app.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <a class="brand" href="/">页索引 <span>PAGE INDEX</span></a>
+    <output id="backend">推理后端待加载</output>
+  </header>
+  <main>
+    <section class="intro">
+      <p class="kicker">本地文档检索</p>
+      <h1>从关键词找到原文</h1>
+      <p>文档与问题在浏览器内生成向量，由本机 seekdb 结合语义与全文索引排序。</p>
+    </section>
+    <div class="workspace">
+      <aside>
+        <h2>资料库</h2>
+        <form id="import">
+          <label for="library">知识库名称</label>
+          <input id="library" value="notes" pattern="[a-z][a-z0-9_]{1,31}" maxlength="32" required>
+          <label for="files">添加 TXT 或 Markdown</label>
+          <input id="files" type="file" accept=".txt,.md,.markdown,text/plain,text/markdown" multiple>
+          <button type="submit">导入文件</button>
+          <button class="secondary" type="button" id="demo">导入英文示例</button>
+        </form>
+        <progress id="progress" max="1" value="0" aria-label="文档向量化进度"></progress>
+        <p id="import-status" role="status">可按名称切换知识库。模型首轮需下载。</p>
+      </aside>
+      <section aria-labelledby="search-heading">
+        <h2 id="search-heading">查找文档片段</h2>
+        <form id="search">
+          <label for="query">输入关键词或一句问题</label>
+          <div class="searchline">
+            <input id="query" placeholder="例如 how does write ahead logging recover data?" maxlength="300" required>
+            <button type="submit">搜索</button>
+          </div>
+        </form>
+        <p id="search-status" role="status">导入文档后可立即检索。示例适合英文模型。</p>
+        <ol id="results" aria-label="检索结果"></ol>
+      </section>
+    </div>
+  </main>
+</body>
+</html>
