@@ -1,0 +1,12 @@
+services:
+  lunar-case-game:
+    build: ${LUNAR_CASE_DIR:?Set LUNAR_CASE_DIR to the absolute path of the dify entry directory}
+    restart: unless-stopped
+    volumes:
+      - lunar-case-data:/data
+  ssrf_proxy:
+    environment:
+      SSRF_PROXY_ALLOW_PRIVATE_DOMAINS: lunar-case-game
+
+volumes:
+  lunar-case-data:
