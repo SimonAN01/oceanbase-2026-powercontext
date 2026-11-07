@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>实验对照账本</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>实验对照账本</h1>
+    <p class="subtitle">科研组会实验记录与对照工具 · 演示数据</p>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="list">实验列表</button>
+    <button class="tab" data-tab="add">新增实验</button>
+    <button class="tab" data-tab="compare">对照比较</button>
+    <button class="tab" data-tab="groups">可比组</button>
+  </nav>
+
+  <main>
+    <!-- Tab: Experiment List -->
+    <section id="tab-list" class="tab-content active">
+      <div class="search-bar">
+        <input type="text" id="search-input" placeholder="关键词搜索（如 ResNet Cutout baseline）">
+        <select id="filter-dataset"><option value="">所有数据集</option></select>
+        <select id="filter-split"><option value="">所有划分</option></select>
+        <select id="filter-metric"><option value="">所有指标</option></select>
+        <button id="search-btn">搜索</button>
+        <button id="reset-btn" class="btn-secondary">重置</button>
+      </div>
+      <div id="stats-bar" class="stats-bar"></div>
+      <div id="results" class="results"></div>
+    </section>
+
+    <!-- Tab: Add Experiment -->
+    <section id="tab-add" class="tab-content">
+      <form id="add-form" class="form">
+        <div class="form-grid">
+          <label>实验名称 <input type="text" name="name" required placeholder="如 ResNet-56 + Cutout"></label>
+          <label>数据集 <input type="text" name="dataset" required placeholder="如 CIFAR-10"></label>
+          <label>划分 <input type="text" name="split" required placeholder="如 train/test 80/20"></label>
+          <label>指标 <input type="text" name="metric" required placeholder="如 accuracy"></label>
+          <label>数值 <input type="number" step="any" name="value" required placeholder="如 94.7"></label>
+          <label>状态
+            <select name="status">
+              <option value="completed">已完成</option>
+              <option value="running">进行中</option>
+              <option value="failed">失败</option>
+              <option value="planned">计划中</option>
+            </select>
+          </label>
+        </div>
+        <label>配置说明 <textarea name="config" rows="3" placeholder="模型架构、超参数、数据增强等"></textarea></label>
+        <label>备注 <textarea name="notes" rows="2" placeholder="实验结论、观察等"></textarea></label>
+        <button type="submit" class="btn-primary">添加实验</button>
+        <div id="add-result" class="form-result"></div>
+      </form>
+    </section>
+
+    <!-- Tab: Compare -->
+    <section id="tab-compare" class="tab-content">
+      <p class="hint">选择两条或多条实验记录进行对照。只有数据集、划分、指标均相同且状态为已完成的记录才可比较。</p>
+      <div id="compare-select" class="compare-select"></div>
+      <div id="compare-actions">
+        <button id="compare-btn" class="btn-primary" disabled>比较选中记录</button>
+      </div>
+      <div id="compare-result" class="compare-result"></div>
+    </section>
+
+    <!-- Tab: Groups -->
+    <section id="tab-groups" class="tab-content">
+      <p class="hint">自动按 数据集 + 划分 + 指标 分组，展示可比较的实验对照。</p>
+      <div id="groups-container" class="groups"></div>
+    </section>
+  </main>
+
+  <footer>
+    <p>实验对照账本 · 演示数据为虚构 · seekdb-js v1.4.0 · Node.js 22+</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

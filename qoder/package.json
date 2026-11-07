@@ -1,0 +1,25 @@
+{
+  "name": "experiment-ledger",
+  "version": "1.0.0",
+  "description": "实验对照账本 - Experiment Ledger for research group meetings",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "seed": "node src/seed.js",
+    "test": "node src/blackbox-test.js",
+    "test:blackbox": "node src/blackbox-test.js"
+  },
+  "keywords": ["experiment", "ledger", "research", "seekdb"],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "seekdb": "1.4.0"
+  },
+  "overrides": {
+    "adm-zip": "0.6.1"
+  }
+}

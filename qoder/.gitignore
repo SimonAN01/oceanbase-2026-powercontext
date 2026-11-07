@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+.qoder.site
+
+# seekdb database files
+.seekdb/
+*.seekdb
+data/
+
+# Test artifacts
+test-*.json
+*.test.db
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Temporary files
+tmp/
+temp/
