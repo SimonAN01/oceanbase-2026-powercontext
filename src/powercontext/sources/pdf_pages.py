@@ -23,6 +23,8 @@ import math
 import re
 import zlib
 from collections import Counter
+from itertools import pairwise
+from statistics import median
 from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
@@ -133,6 +135,86 @@ def _normalize_text_positions(stream: ContentStream) -> bool:
     if changed:
         stream.operations = normalized
     return changed
+
+
+def _restore_reversed_latin_runs(stream: ContentStream, resources: DictionaryObject) -> bool:  # noqa: C901
+    from pypdf.generic import ByteStringObject, DictionaryObject
+
+    fonts = resources.get("/Font")
+    fonts = fonts.get_object() if fonts is not None else None
+    if not isinstance(fonts, DictionaryObject):
+        return False
+    operations = stream.operations
+    replacements = []
+    for index, (operands, operator) in enumerate(operations):
+        if operator != b"Tf" or len(operands) != 2 or operands[0] not in fonts or operands[1] <= 0:
+            continue
+        font = fonts[operands[0]]
+        if (
+            not isinstance(font, DictionaryObject)
+            or font.get("/Encoding") not in ("/WinAnsiEncoding", "/StandardEncoding", "/MacRomanEncoding")
+            or "/ToUnicode" in font
+            or "/Widths" not in font
+            or "/FirstChar" not in font
+        ):
+            continue
+        widths, first_code = font["/Widths"], font["/FirstChar"]
+        if not isinstance(widths, list) or not isinstance(first_code, int) or not 0 <= 32 - first_code < len(widths):
+            continue
+        start = end = index + 1
+        letters = []
+        while end + 1 < len(operations):
+            matrix, position = operations[end]
+            glyph, paint = operations[end + 1]
+            if position != b"Tm" or len(matrix) != 6 or matrix[1] or matrix[2] or matrix[0] <= 0 or matrix[3] <= 0:
+                break
+            if paint not in (b"Tj", b"TJ") or len(glyph) != 1:
+                break
+            values = glyph[0] if paint == b"TJ" else glyph
+            if not isinstance(values, list) or len(values) != 1 or not isinstance(values[0], bytes):
+                break
+            value = values[0]
+            if len(value) != 1 or not value.isalpha() or not 0 <= value[0] - first_code < len(widths):
+                break
+            em = matrix[0] * operands[1]
+            if letters:
+                previous = letters[-1][0]
+                if previous[:4] != matrix[:4] or previous[5] != matrix[5] or not 0 < previous[4] - matrix[4] <= 2 * em:
+                    break
+            letters.append((matrix, value))
+            end += 2
+        if len(letters) < 4:
+            continue
+        # Collapsing the run changes its ending cursor. Require an absolute
+        # position or the end of the text object before any later drawing.
+        after = end
+        while after < len(operations) and operations[after][1] in (b"gs", b"g", b"rg", b"k", b"Tf"):
+            after += 1
+        if after == len(operations) or operations[after][1] not in (b"Tm", b"ET"):
+            continue
+        letters.reverse()
+        em = letters[0][0][0] * operands[1]
+        space = widths[32 - first_code] / 1000
+        gaps = [
+            (right[4] - left[4]) / em - widths[value[0] - first_code] / 1000
+            for (left, value), (right, _) in pairwise(letters)
+        ]
+        tracking = median(gaps)
+        if space <= 0 or abs(tracking) > space + 1e-6:
+            continue
+        # Track the ordinary gap between letters on this line. Use most of a
+        # space's width as the additional distance needed for a word break.
+        text = bytearray(letters[0][1])
+        for (_, value), gap in zip(letters[1:], gaps, strict=True):
+            if gap > tracking + 0.75 * space:
+                text.extend(b" ")
+            text.extend(value)
+        replacements.append((start, end, [(letters[0][0], b"Tm"), ([ByteStringObject(bytes(text))], b"Tj")]))
+    for start, end, replacement in reversed(replacements):
+        operations[start:end] = replacement
+    if replacements:
+        stream.operations = operations
+    return bool(replacements)
 
 
 def _normalize_glyph_names(resources: DictionaryObject) -> DictionaryObject:
@@ -519,6 +601,7 @@ def _prepare_page_streams(page: PageObject) -> None:
     from pypdf.generic import ContentStream, DecodedStreamObject, NameObject
 
     normalized: dict[int, DictionaryObject] = {}
+    uncropped = page.cropbox == page.mediabox
 
     def normalize(owner: DictionaryObject) -> DictionaryObject:
         identity = id(owner)
@@ -532,11 +615,12 @@ def _prepare_page_streams(page: PageObject) -> None:
             # font's character map when pypdf reads this ContentStream again.
             stream = ContentStream(_resolve_pdf_contents(contents), page.pdf, "bytes")
             resources = owner.get("/Resources")
+            changed = False
             if resources is not None:
-                owner[NameObject("/Resources")] = _restore_marked_glyphs(
-                    stream, _normalize_glyph_names(resources.get_object())
-                )
-            changed = _normalize_text_positions(stream)
+                resources = _restore_marked_glyphs(stream, _normalize_glyph_names(resources.get_object()))
+                owner[NameObject("/Resources")] = resources
+                changed = uncropped and _restore_reversed_latin_runs(stream, resources)
+            changed = _normalize_text_positions(stream) or changed
             if is_page:
                 # Reuse the parsed operators even when their positions needed
                 # no repair. Reopening the original stream parses every glyph

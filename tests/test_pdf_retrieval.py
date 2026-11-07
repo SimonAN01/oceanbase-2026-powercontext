@@ -148,6 +148,34 @@ def test_cropped_spread_keeps_only_text_from_the_visible_page():
     assert pages[0].text.split() == ["VISIBLE", "CROSSES", "FORMTEXT"]
 
 
+def test_explicitly_reverse_positioned_latin_glyphs_keep_word_boundaries():
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
+
+    writer = pypdf.PdfWriter()
+    page = writer.add_blank_page(width=200, height=100)
+    name = NameObject
+    font = DictionaryObject({
+        name("/Subtype"): name("/Type1"),
+        name("/BaseFont"): name("/Helvetica"),
+        name("/Encoding"): name("/WinAnsiEncoding"),
+        name("/FirstChar"): NumberObject(32),
+        name("/LastChar"): NumberObject(90),
+        name("/Widths"): ArrayObject([NumberObject(250), *[NumberObject(600) for _ in range(58)]]),
+    })
+    page[name("/Resources")] = DictionaryObject({name("/Font"): DictionaryObject({name("/F1"): font})})
+    glyphs = list(zip("ALPHABETA", (10, 18.4, 26.8, 35.2, 43.6, 55, 63.4, 71.8, 80.2), strict=True))
+    reverse = " ".join(f"1 0 0 1 {x} 80 Tm [({letter})] TJ" for letter, x in reversed(glyphs))
+    stream = DecodedStreamObject()
+    stream.set_data(f"BT /F1 12 Tf {reverse} 0 0 0 1 k 1 0 0 1 10 40 Tm (NEXT) Tj ET".encode())
+    page[name("/Contents")] = stream
+    output = io.BytesIO()
+    writer.write(output)
+
+    pages = parse_pdf_document(PDFDocumentInput(document_id="reverse-positioned", content=output.getvalue()))
+    assert pages[0].text.split() == ["ALPHA", "BETA", "NEXT"]
+
+
 def test_compensated_character_spacing_preserves_words_and_real_gaps():
     pypdf = pytest.importorskip("pypdf")
     from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
