@@ -244,6 +244,37 @@ def test_pdf_rejects_incomplete_flate_content_in_a_later_page(cut):
         assert [page.text for page in parse_pdf_document(document)] == ["", "ALPHA\nOMEGA"]
 
 
+@pytest.mark.parametrize("nested", [False, True])
+def test_pdf_rejects_an_unresolved_drawn_xobject(nested):
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
+
+    writer = pypdf.PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    page = writer.add_blank_page(width=100, height=100)
+    name = NameObject
+    font = DictionaryObject({name("/Subtype"): name("/Type1"), name("/BaseFont"): name("/Helvetica")})
+    resources = DictionaryObject({name("/Font"): DictionaryObject({name("/F1"): font})})
+    stream = DecodedStreamObject()
+    prefix = b"BT /F1 12 Tf 10 10 Td (ALPHA) Tj ET "
+    if nested:
+        form = DecodedStreamObject()
+        form[name("/Subtype")] = name("/Form")
+        form[name("/BBox")] = ArrayObject([NumberObject(v) for v in (0, 0, 100, 100)])
+        form.set_data(b"/Missing Do")
+        resources[name("/XObject")] = DictionaryObject({name("/Form1"): writer._add_object(form)})
+        stream.set_data(prefix + b"/Form1 Do")
+    else:
+        stream.set_data(prefix + b"/Missing Do")
+    page[name("/Resources")] = resources
+    page[name("/Contents")] = stream
+    output = io.BytesIO()
+    writer.write(output)
+
+    with pytest.raises(ValueError, match="unreadable-pdf-document"):
+        parse_pdf_document(PDFDocumentInput(document_id="missing-xobject", content=output.getvalue()))
+
+
 @pytest.mark.parametrize("explicit_unicode", [False, True])
 def test_pdf_recovers_an_adobe_glyph_with_a_stylistic_suffix(explicit_unicode):
     pypdf = pytest.importorskip("pypdf")

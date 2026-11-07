@@ -415,9 +415,17 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
             extractor._actual_str_size["str_widths"] += advances.pop() * extractor.font_size
 
     base = PageObject._extract_text
+
+    def extraction_warning(message, *, exception: Exception | None = None, **params):
+        # pypdf logs and suppresses exceptions from invoked XObjects. A
+        # successful result must not silently omit part of the physical page.
+        if exception is not None:
+            raise ValueError("unreadable-pdf-xobject") from exception
+        base.__globals__["logger_warning"](message, **params)
+
     extract = FunctionType(
         base.__code__,
-        {**base.__globals__, "TextExtraction": PositionedExtraction},
+        {**base.__globals__, "TextExtraction": PositionedExtraction, "logger_warning": extraction_warning},
         base.__name__,
         base.__defaults__,
         base.__closure__,
