@@ -959,6 +959,21 @@ _FINANCIAL_EXPANSIONS = {
     "geography": "geographic geographical countries regions international worldwide segments divisions",
     "geographies": "geographic geographical countries regions international worldwide segments divisions",
     "legal": "litigation contingencies proceedings settlements",
+    "customer": "customers concentration major customer revenues government",
+    "customers": "customer concentration major customers revenues government",
+    "concentration": "customer customers concentration major customer revenues",
+    "registered": "registered securities exchange national debt",
+    "securities": "debt securities equity registered exchange national",
+    "debt": "debt securities borrowings registered exchange",
+    "exchange": "exchange registered securities national debt",
+    "retain": "retention attrition card members customers",
+    "retention": "retain attrition card members customers",
+    "card": "card members customers retention",
+    "members": "card members customers retention",
+    "cyclicality": "cyclical cyclical industry demand economic",
+    "cyclical": "cyclicality cyclical industry demand economic",
+    "production": "production rate rates deliveries aircraft",
+    "rates": "rate production rates deliveries aircraft",
 }
 
 
@@ -1128,15 +1143,23 @@ def _rank_pages(
             if document[term]
         )
 
-    ranking = sorted(range(len(hits)), key=lambda index: (*priorities[index], -score(index), index))
+    ranking = sorted(range(len(hits)), key=lambda index: (-score(index), index))
     # RRF preserves a short topic query's signal without requiring the Memory
     # and page-level BM25 scores to share a numerical scale. The reranker is
     # one additional ranking; named-document pool expansion casts no vote.
     fused = {
         index: query_ranks.get(_hit_key(hits[index]), 0.0) + 1.0 / (60 + rank) for rank, index in enumerate(ranking, 1)
     }
+    # Prefer a named filing and a primary statement page, but keep these as
+    # bounded boosts. A hard partition can crowd the answer page out of the
+    # twenty returned citations when the issuer mention is ambiguous.
+    def final_score(index: int) -> float:
+        named_boost = 0.05 if priorities[index][0] else 0.0
+        statement_boost = 0.03 if priorities[index][1] else 0.0
+        return fused[index] + named_boost + statement_boost
+
     # sorted is stable, so BM25 order resolves equal fused scores.
-    return tuple(hits[index] for index in sorted(ranking, key=lambda index: (*priorities[index], -fused[index])))
+    return tuple(hits[index] for index in sorted(ranking, key=lambda index: (-final_score(index), index)))
 
 
 def _question_clauses(question: str) -> tuple[str, ...]:
@@ -1302,11 +1325,24 @@ async def _search_candidates(
         mention_hits, inferred_documents = await _search_document_mentions(memory, question, limit)
         for hit in mention_hits:
             candidates.setdefault(_hit_key(hit), hit)
+    # A narrative question may name no filing at all. Add one short query for
+    # each distinctive word so a page that shares only a single evidence term
+    # can still enter the candidate pool.
+    primary_terms = set(analyze_fts_query(" ".join(_question_clauses(question))).split())
+    for term in sorted((term for term in primary_terms if len(term) >= 4), key=len, reverse=True)[:12]:
+        page = await memory.search(SearchMemoryRequest(query=term, limit=max(200, limit * 10), mode="fts"))
+        for hit in page.hits:
+            candidates.setdefault(_hit_key(hit), hit)
     # Short topic queries have a global top-N cutoff. In a long filing,
     # numerous matching notes can crowd a primary statement out of every
     # topic pool. Retrieve the named filing through the same public API before
     # reranking, expanding the request until Memory has no further hits.
-    for document in sorted(named_documents or inferred_documents):
+    routed_documents = named_documents or inferred_documents
+    if not routed_documents and candidates:
+        # No issuer was identifiable from the question. Expand every observed
+        # filing so recall is not limited to the first topic pool.
+        routed_documents = frozenset(hit.text.partition("\n")[0] for hit in candidates.values())
+    for document in sorted(routed_documents):
         pool_limit = max(1000, limit * 10)
         while True:
             page = await memory.search(
