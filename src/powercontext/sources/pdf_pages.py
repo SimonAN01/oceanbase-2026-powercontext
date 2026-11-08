@@ -954,7 +954,7 @@ _FINANCIAL_EXPANSIONS = {
     "capex": "capital expenditures property plant equipment payments additions",
     "roa": "net income total assets",
     "roe": "net income shareholders stockholders equity",
-    "margin": "income revenue sales earnings",
+    "margin": "income revenue sales earnings operating income margin results operations",
     "revenue": "sales revenues",
     "sales": "revenue revenues",
     "restructuring": "restructuring impairment charges expenses",
@@ -964,7 +964,7 @@ _FINANCIAL_EXPANSIONS = {
     "repurchase": "repurchase repurchases authorization",
     "geography": "geographic geographical countries regions international worldwide segments divisions",
     "geographies": "geographic geographical countries regions international worldwide segments divisions",
-    "legal": "litigation contingencies proceedings settlements",
+    "legal": "legal proceedings litigation contingencies claims settlements actions",
     "customer": "customers concentration major customer revenues government",
     "customers": "customer concentration major customers revenues government",
     "concentration": "customer customers concentration major customer revenues",
@@ -980,6 +980,21 @@ _FINANCIAL_EXPANSIONS = {
     "cyclical": "cyclicality cyclical industry demand economic",
     "production": "production rate rates deliveries aircraft",
     "rates": "rate production rates deliveries aircraft",
+    "capital": "property plant equipment capital expenditures depreciation",
+    "intensive": "capital intensive property plant equipment capital expenditures",
+    "segment": "business segments reportable segments sales operating income",
+    "segments": "business segment reportable segments sales operating income",
+    "growth": "sales growth organic growth acquisitions divestitures",
+    "exclude": "excluding acquisitions divestitures organic sales",
+    "excluding": "exclude acquisitions divestitures organic sales",
+    "product": "products services revenue categories segment",
+    "products": "product services revenue categories segment",
+    "service": "services products revenue categories segment",
+    "effective": "effective tax rate income taxes",
+    "tax": "income taxes effective tax rate",
+    "battles": "legal proceedings litigation contingencies claims actions",
+    "categories": "business segment data summary revenues products services",
+    "category": "business segment data summary revenues products services",
 }
 
 
@@ -1002,7 +1017,7 @@ _STATEMENT_SEARCH_TERMS = {"income": "income earnings", "cash": "cash flows", "b
 _NUMERIC_QUESTION = re.compile(
     r"\b(?:calculate|compute|ratio|margin|growth|turnover|percent(?:age)?|amount|quantity|costs?|expenses?"
     r"|ebitda?|capex|fcf|eps|nwc|roic|revenue|sales|profit|income|earnings|debt|liquidity|leverage"
-    r"|assets|liabilities|equity|inventory|dividends)\b|%|\b(?:how much|return on)\b"
+    r"|assets|liabilities|equity|inventory|dividends|capital|intensive)\b|%|\b(?:how much|return on)\b"
 )
 _STATEMENT_PREFIX = r"^(?:(?:consolidated|combined|condensed)\s+){0,2}"
 _INNER_QUALIFIER = r"(?:(?:consolidated|combined|condensed)\s+)?"
