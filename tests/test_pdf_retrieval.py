@@ -75,6 +75,49 @@ async def _store_pages(runtime, scope_id, texts):
         pytest.fail("source flush did not drain")
 
 
+def test_null_page_resources_inherit_the_parent_font():
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject, NullObject
+
+    writer = pypdf.PdfWriter()
+    page = writer.add_blank_page(width=200, height=100)
+    name = NameObject
+    font = DictionaryObject({name("/Subtype"): name("/Type1"), name("/BaseFont"): name("/Helvetica")})
+    writer._pages.get_object()[name("/Resources")] = DictionaryObject({
+        name("/Font"): DictionaryObject({name("/F1"): font}),
+        name("/XObject"): NullObject(),
+    })
+    page[name("/Resources")] = writer._add_object(NullObject())
+    stream = DecodedStreamObject()
+    stream.set_data(b"BT /F1 12 Tf 20 40 Td (Retained revenue) Tj ET")
+    page[name("/Contents")] = stream
+
+    output = io.BytesIO()
+    writer.write(output)
+    pages = parse_pdf_document(PDFDocumentInput(document_id="inherited-resources", content=output.getvalue()))
+    assert [page.text.strip() for page in pages] == ["Retained revenue"]
+
+
+@pytest.mark.parametrize("key", ["/Resources", "/XObject"])
+def test_invalid_resource_dictionary_in_a_later_page_fails_atomically(key):
+    pypdf = pytest.importorskip("pypdf")
+    from pypdf.generic import DecodedStreamObject, NameObject, NumberObject
+
+    writer = pypdf.PdfWriter()
+    writer.add_blank_page(width=200, height=100)
+    page = writer.add_blank_page(width=200, height=100)
+    stream = DecodedStreamObject()
+    stream.set_data(b"q Q")
+    page[NameObject("/Contents")] = stream
+    owner = page if key == "/Resources" else page["/Resources"]
+    owner[NameObject(key)] = NumberObject(42)
+
+    output = io.BytesIO()
+    writer.write(output)
+    with pytest.raises(ValueError, match="unreadable-pdf-document"):
+        parse_pdf_document(PDFDocumentInput(document_id="invalid-resources", content=output.getvalue()))
+
+
 def test_legacy_form_uses_the_resources_of_each_invoking_page():
     pypdf = pytest.importorskip("pypdf")
     from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
@@ -111,10 +154,10 @@ def test_legacy_form_uses_the_resources_of_each_invoking_page():
     assert [page.text.strip() for page in pages] == ["A", "B"]
 
 
-@pytest.mark.parametrize("form_resources", ["legacy", "empty", "nested"])
+@pytest.mark.parametrize("form_resources", ["legacy", "empty", "nested", "null"])
 def test_pdf_form_inherits_the_selected_font(form_resources):
     pypdf = pytest.importorskip("pypdf")
-    from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
+    from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NullObject, NumberObject
 
     writer = pypdf.PdfWriter()
     page = writer.add_blank_page(width=200, height=100)
@@ -139,9 +182,13 @@ def test_pdf_form_inherits_the_selected_font(form_resources):
         form.set_data(commands)
         return writer._add_object(form)
 
+    resources = DictionaryObject()
     if form_resources == "legacy":
         writer.pdf_header = "%PDF-1.1"
-    form = add_form(b"BT 40 60 Td (AB) Tj ET", None if form_resources == "legacy" else DictionaryObject())
+        resources = None
+    elif form_resources == "null":
+        resources = NullObject()
+    form = add_form(b"BT 40 60 Td (AB) Tj ET", resources)
     if form_resources == "nested":
         form = add_form(b"/Inner Do", DictionaryObject({name("/XObject"): DictionaryObject({name("/Inner"): form})}))
     page[name("/Resources")] = DictionaryObject({

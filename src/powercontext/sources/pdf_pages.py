@@ -726,6 +726,47 @@ def _resolve_pdf_contents(contents):
     raise ValueError("invalid-pdf-content-stream")
 
 
+def _optional_pdf_dictionary(value: PdfObject | None) -> DictionaryObject | None:
+    from pypdf.generic import DictionaryObject, NullObject
+
+    resolved = value.get_object() if value is not None else None
+    if resolved is None or isinstance(resolved, NullObject):
+        return None
+    if not isinstance(resolved, DictionaryObject):
+        raise TypeError("invalid-pdf-resource-dictionary")
+    return resolved
+
+
+def _prepare_pdf_resources(owner: DictionaryObject, *, inherit: bool) -> DictionaryObject | None:
+    from pypdf.generic import DictionaryObject, NameObject
+
+    current: DictionaryObject | None = owner
+    resources = None
+    visited = set()
+    while current is not None:
+        identity = id(current)
+        if identity in visited:
+            raise ValueError("cyclic-pdf-resource-inheritance")
+        visited.add(identity)
+        resources = _optional_pdf_dictionary(current.get("/Resources"))
+        if resources is not None or not inherit:
+            break
+        # An explicit null is equivalent to an omitted resource entry.
+        current = _optional_pdf_dictionary(current.get("/Parent"))
+    if resources is None:
+        owner.pop("/Resources", None)
+        return None
+    resources = DictionaryObject(resources)
+    for key in ("/Font", "/XObject"):
+        entries = _optional_pdf_dictionary(resources.get(key))
+        if entries is None:
+            resources.pop(key, None)
+        else:
+            resources[NameObject(key)] = DictionaryObject(entries) if key == "/XObject" else entries
+    owner[NameObject("/Resources")] = resources
+    return resources
+
+
 def _prepare_page_streams(page: PageObject) -> None:
     from pypdf import PageObject
     from pypdf.generic import ContentStream, DecodedStreamObject, NameObject
@@ -740,14 +781,14 @@ def _prepare_page_streams(page: PageObject) -> None:
         normalized[identity] = owner
         is_page = isinstance(owner, PageObject)
         contents = owner.get("/Contents") if is_page else owner
+        resources = _prepare_pdf_resources(owner, inherit=is_page)
         if contents is not None:
             # Keep encoded glyph bytes: decoded PDF strings would bypass the
             # font's character map when pypdf reads this ContentStream again.
             stream = ContentStream(_resolve_pdf_contents(contents), page.pdf, "bytes")
-            resources = owner.get("/Resources")
             changed = False
             if resources is not None:
-                resources = _restore_marked_glyphs(stream, _normalize_glyph_names(resources.get_object()))
+                resources = _restore_marked_glyphs(stream, _normalize_glyph_names(resources))
                 owner[NameObject("/Resources")] = resources
                 changed = uncropped and _restore_reversed_latin_runs(stream, resources)
             changed = _normalize_text_positions(stream) or changed
@@ -764,8 +805,7 @@ def _prepare_page_streams(page: PageObject) -> None:
                 replacement.set_data(stream.get_data())
                 owner = replacement
                 normalized[identity] = owner
-        resources = owner.get("/Resources")
-        xobjects = resources.get_object().get("/XObject") if resources is not None else None
+        xobjects = resources.get("/XObject") if resources is not None else None
         if xobjects is not None:
             entries = xobjects.get_object()
             for name, reference in entries.items():
