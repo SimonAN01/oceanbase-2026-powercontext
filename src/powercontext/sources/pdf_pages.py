@@ -1015,7 +1015,7 @@ def _named_documents(hits: tuple[MemoryHit, ...], question: str) -> frozenset[st
         for start in range(len(query_words))
         for width in range(1, min(4, len(query_words) - start) + 1)
     }
-    filing_words = {"10k", "10q", "8k", "annual", "annualreport", "report", "earnings", "dated"}
+    filing_words = {"10k", "10q", "8k", "annual", "annualreport", "report", "earnings", "dated", "fy", "fiscal", "year"}
     documents = {
         identity: company
         for identity in {hit.text.partition("\n")[0] for hit in hits}
@@ -1023,7 +1023,11 @@ def _named_documents(hits: tuple[MemoryHit, ...], question: str) -> frozenset[st
             company := frozenset(
                 word
                 for word in re.findall(r"[a-z0-9]+", identity.casefold())
-                if len(word) > 1 and re.search(r"[a-z]", word) and word not in filing_words and word in query_identity
+                if len(word) > 1
+                and re.search(r"[a-z]", word)
+                and word not in filing_words
+                and not _REPORT_YEARS.fullmatch(word)
+                and word in query_identity
             )
         )
     }

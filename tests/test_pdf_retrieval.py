@@ -934,6 +934,35 @@ def test_short_topic_rankings_preserve_narrative_pages(question, target, backgro
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("document_id", ["ACME_FY2025", "d93ac471c2b6408a"])
+def test_shared_fiscal_year_does_not_identify_another_company(document_id):
+    async def scenario():
+        evidence = f"{document_id}\nConsolidated Statements of Income\nNet income 42."
+        covers = (
+            f"{document_id}\nACME Inc.\nFor the fiscal year ended December 31, 2025.",
+            f"{document_id}\nACME Inc. Corporate Governance and Annual Review.",
+        )
+        decoy = (
+            "BETA_FY2025\nConsolidated Statements of Income\n"
+            "Comparison to ACME's FY2025 net income in its FY2025 income statement. "
+            "This income statement reports BETA net income 128."
+        )
+        async with open_builtin_runtime(BuiltinConfig(), candidate_pipeline=_PagePipeline()) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Shared fiscal year", summary="Company identity", idempotency_key="shared-year")
+            )
+            memory = runtime.memory.for_scope(scope.scope_id)
+            await _store_pages(runtime, scope.scope_id, (decoy, *covers, evidence))
+            citations = await search_pdf_pages(
+                memory, "What was ACME's FY2025 net income in its income statement?", limit=1
+            )
+            assert len(citations) == 1
+            assert (await memory.get(GetMemoryEntryRequest(citation=citations[0]))).entry.text == evidence
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("year", [2026, 2027])
 def test_report_year_distinguishes_filings_of_the_same_company(year):
     async def scenario():
