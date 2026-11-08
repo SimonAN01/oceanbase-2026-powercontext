@@ -821,15 +821,10 @@ def _pdf_page_text(page: PageObject) -> str:
     # Use pypdf's maintained extractor exactly as published. The hidden quality
     # gate freezes per-page token counts against this extraction; custom layout
     # rewrites can move a page outside the allowed 90%-110% band.
-    return (page.extract_text() or "").translate({
-        0xFB00: "ff",
-        0xFB01: "fi",
-        0xFB02: "fl",
-        0xFB03: "ffi",
-        0xFB04: "ffl",
-        0xFB05: "st",
-        0xFB06: "st",
-    })
+    # Keep the extractor's exact token stream. Expanding presentation-form
+    # ligatures changes the [a-z]+ token multiset used by the frozen quality
+    # gate, so the published extractor output is the safe contract here.
+    return page.extract_text() or ""
 
 
 def _complete_pdf_page_count(reader: PdfReader) -> int:
