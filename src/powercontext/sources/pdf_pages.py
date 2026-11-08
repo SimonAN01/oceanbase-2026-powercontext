@@ -364,7 +364,7 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
     from types import FunctionType, MethodType
 
     from pypdf import PageObject
-    from pypdf._text_extraction import mult
+    from pypdf._text_extraction import get_text_operands, mult
     from pypdf._text_extraction._text_extractor import TextExtraction
     from pypdf.generic import ArrayObject, DictionaryObject, NameObject
     from typing_extensions import override
@@ -399,6 +399,7 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
                 self.TL = parent.TL
             self.saved_text_offsets: list[tuple[float, float]] = []
             self.outer_matrix = outer_matrices[-1]
+            self.crop_advance: float | None = 0.0
             active[-1] = self
             self._last_text_position: tuple[list[float], list[float], float] | None = None
 
@@ -419,7 +420,10 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
                 top = y + d * (self.text_rise + top_bound * units)
                 if top < crop_bottom or bottom > crop_top:
                     return True
-            if not horizontal_crop or crop_left <= x <= crop_right:
+            if not horizontal_crop or self.crop_advance is None:
+                return False
+            x += a * self.crop_advance
+            if crop_left <= x <= crop_right:
                 return False
             length = sum(len(value) for value in values if isinstance(value, (str, bytes)))
             widths = self.font.character_widths.values()
@@ -434,6 +438,36 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
                 right_bound * units + length * (max(0, max(widths)) * units + spacing) + sum(max(0, v) for v in shifts)
             )
             return x + right * scale < crop_left or x + left * scale > crop_right
+
+        def advance_crop_cursor(self, values):
+            if not horizontal_crop or self.crop_advance is None:
+                return
+            if self.font.sub_type not in ("Type1", "TrueType", "MMType1"):
+                self.crop_advance = None
+                return
+            units = self.font_size / 1000
+            advance = 0.0
+            for value in values:
+                if isinstance(value, (int, float)):
+                    advance -= float(value) * units
+                elif isinstance(value, (str, bytes)):
+                    try:
+                        glyphs, _ = get_text_operands(
+                            [value], self.cm_matrix, self.tm_matrix, self.font, self.orientations
+                        )
+                    except UnicodeError:
+                        self.crop_advance = None
+                        return
+                    if len(glyphs) != len(value):
+                        self.crop_advance = None
+                        return
+                    width = sum(
+                        self.font.space_width if glyph == self.font.space_char else self.font.get_text_width(glyph)
+                        for glyph in glyphs
+                    )
+                    spaces = value.count(b" ") if isinstance(value, bytes) else value.count(" ")
+                    advance += width * units + len(glyphs) * self.character_spacing + spaces * (self.space_scale - 1)
+            self.crop_advance += advance * self.char_scale
 
         def _separate_rewound_word(self):
             if self._last_text_position is None:
@@ -460,6 +494,8 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
 
         @override
         def process_operation(self, operator, operands):
+            if operator in (b"BT", b"Tm", b"Td", b"T*"):
+                self.crop_advance = 0.0
             if operator == b"Tc" and operands:
                 self.character_spacing = float(operands[0])
             elif operator == b"Ts" and operands:
@@ -489,10 +525,14 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
             raise ValueError("missing-pdf-text-extractor")
         original = operands[0]
         if operator == b"Tj":
-            if extractor._outside_crop(operands):
+            outside = extractor._outside_crop(operands)
+            extractor.advance_crop_cursor(operands)
+            if outside:
                 saved.append((operands, original))
                 operands[0] = ""
             return
+        outside = extractor._outside_crop(original)
+        extractor.advance_crop_cursor(original)
         advances.append(-sum(float(value) for value in original if isinstance(value, (int, float))))
         spacing = 1000 * extractor.character_spacing / extractor.font_size if extractor.font_size > 0 else 0.0
         threshold = extractor._space_width * 0.95
@@ -501,7 +541,7 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
         # Retain the raw advances for cursor accounting after extraction.
         visible = (
             []
-            if extractor._outside_crop(original)
+            if outside
             else [
                 value
                 for value in original
@@ -525,6 +565,10 @@ def _extract_page_text(page: PageObject) -> str:  # noqa: C901 - keep per-page e
             # subsequent Td/Tm can then mistake accumulated letter spacing
             # for a word boundary in the middle of a word or number.
             extractor._actual_str_size["str_widths"] += advances.pop() * extractor.font_size
+        elif horizontal_crop and operator in (b"'", b'"') and operands:
+            extractor = active[-1]
+            if extractor is not None:
+                extractor.advance_crop_cursor(operands[-1:])
 
     base = PageObject._extract_text
 
