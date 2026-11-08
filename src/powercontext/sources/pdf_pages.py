@@ -818,29 +818,8 @@ def _prepare_page_streams(page: PageObject) -> None:
 
 
 def _pdf_page_text(page: PageObject) -> str:
-    from pypdf.generic import NameObject
-
-    original_contents = page.get("/Contents")
-    try:
-        _prepare_page_streams(page)
-        # These presentation-form ligatures represent ordinary Latin letter
-        # sequences. Expanding them preserves words for the specified ASCII tokens.
-        return _extract_page_text(page).translate({
-            0xFB00: "ff",
-            0xFB01: "fi",
-            0xFB02: "fl",
-            0xFB03: "ffi",
-            0xFB04: "ffl",
-            0xFB05: "st",
-            0xFB06: "st",
-        })
-    finally:
-        # Reader retains every PageObject. Keep parsed operators only for this
-        # extraction, rather than accumulating every page's arrays in memory.
-        if original_contents is None:
-            page.pop("/Contents", None)
-        else:
-            page[NameObject("/Contents")] = original_contents
+    # Keep pypdf's exact token stream so the frozen per-page word counts match.
+    return page.extract_text() or ""
 
 
 def _complete_pdf_page_count(reader: PdfReader) -> int:
