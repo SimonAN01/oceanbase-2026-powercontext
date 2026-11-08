@@ -1124,6 +1124,13 @@ def _rank_pages(
     inferred_documents: frozenset[str],
 ) -> tuple[MemoryHit, ...]:
     """Fuse topic retrieval ranks with BM25 over the actual retrieved page text."""
+    named_documents = _named_documents(hits, question) or inferred_documents
+    if named_documents:
+        # A scoped Memory can hold several filings. When the question names one,
+        # pages from another issuer must not consume the fixed citation budget.
+        routed = tuple(hit for hit in hits if hit.text.partition("\n")[0] in named_documents)
+        if routed:
+            hits = routed
     documents = [_terms(hit.text) for hit in hits]
     lengths = [sum(document.values()) for document in documents]
     average = sum(lengths) / len(lengths) if lengths else 1.0
@@ -1131,7 +1138,6 @@ def _rank_pages(
     weights = dict.fromkeys(_terms(expansion), 0.35)
     weights.update(dict.fromkeys(_terms(query), 1.0))
     focus = _statement_focus(question)
-    named_documents = _named_documents(hits, question) or inferred_documents
     priorities = [
         (-int(hit.text.partition("\n")[0] in named_documents), -int(_statement_page(hit.text, focus))) for hit in hits
     ]
