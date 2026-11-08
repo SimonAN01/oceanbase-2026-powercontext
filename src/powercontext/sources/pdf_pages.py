@@ -870,25 +870,28 @@ def parse_pdf_document(value: PDFDocumentInput) -> tuple[PDFPageInput, ...]:
     from pypdf.errors import PyPdfError
 
     _validate_document_id(value.document_id)
-    if not value.content or b"%PDF-" not in value.content[:1024]:
+    if (
+        not value.content
+        or b"%PDF-" not in value.content[:1024]
+        or b"%%EOF" not in value.content[-1024:]
+    ):
         raise ValueError("invalid-pdf-document")
-    # pypdf can recover pages even when the final EOF marker is incomplete.
-    if not value.content.rstrip(b"\x00\t\n\f\r ").endswith((b"\n%%EOF", b"\r%%EOF")):
-        raise ValueError("unreadable-pdf-document")
     digest = hashlib.sha256(value.content).hexdigest()
     try:
         reader = PdfReader(io.BytesIO(value.content))
         if reader.is_encrypted and not reader.decrypt(""):
             raise ValueError("password-required")  # noqa: TRY301 - normalize all unreadable files below
-        count = _complete_pdf_page_count(reader)
-        return tuple(
+        # reader.pages walks the complete physical tree. Do not trust a /Count
+        # value alone: incremental updates and linearized files can leave it
+        # inconsistent while every page remains readable.
+        pages = tuple(
             PDFPageInput(
                 document_id=value.document_id,
                 document_sha256=digest,
-                page_number=index + 1,
-                text=_pdf_page_text(reader.get_page(index)),
+                page_number=index,
+                text=_pdf_page_text(page),
             )
-            for index in range(count)
+            for index, page in enumerate(reader.pages, start=1)
         )
     except (
         PyPdfError,
@@ -901,6 +904,9 @@ def parse_pdf_document(value: PDFDocumentInput) -> tuple[PDFPageInput, ...]:
         NotImplementedError,
     ) as error:
         raise ValueError("unreadable-pdf-document") from error
+    if not pages:
+        raise ValueError("pdf-has-no-pages")
+    return pages
 
 
 class _PDFPageAdapter:
